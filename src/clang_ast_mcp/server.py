@@ -14,7 +14,9 @@ Usage:
 
 import json
 import logging
+import os
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -31,21 +33,65 @@ log = logging.getLogger(__name__)
 
 _db: ASTDatabase | None = None
 _search: SymbolSearch | None = None
+_db_path: str = ""
+_db_inode: int = 0
+_db_mtime: float = 0.0
+_last_check: float = 0.0
+_CHECK_INTERVAL = 5.0  # seconds between freshness checks
+
+
+def _get_db_stat() -> tuple[int, float]:
+    """Get inode and mtime of the DB file."""
+    try:
+        st = os.stat(_db_path)
+        return st.st_ino, st.st_mtime
+    except OSError:
+        return 0, 0.0
+
+
+def _ensure_db_fresh():
+    """Reopen DB and rebuild search index if the DB file has changed."""
+    global _db, _search, _db_inode, _db_mtime, _last_check
+
+    now = time.monotonic()
+    if now - _last_check < _CHECK_INTERVAL:
+        return
+    _last_check = now
+
+    inode, mtime = _get_db_stat()
+    if inode == _db_inode and mtime == _db_mtime:
+        return
+
+    log.info("DB changed (inode %s→%s, mtime %s→%s), reopening",
+             _db_inode, inode, _db_mtime, mtime)
+    try:
+        if _db:
+            _db.close()
+    except Exception:
+        pass
+
+    _db = ASTDatabase(_db_path)
+    _search = SymbolSearch(_db)
+    _search.build_index()
+    _db_inode = inode
+    _db_mtime = mtime
+    stats = _db.stats()
+    log.info("Reloaded: %d symbols, %d references, %d files",
+             stats["symbols"], stats["references"], stats["files"])
 
 
 @asynccontextmanager
 async def app_lifespan(server: FastMCP):
     """Initialize database and search index on startup."""
-    global _db, _search
+    global _db, _search, _db_path, _db_inode, _db_mtime
 
-    # DB path comes from environment or default
-    import os
-    db_path = os.environ.get("AST_DB_PATH", ".ast-index.db")
-    log.info("Opening AST database: %s", db_path)
+    _db_path = os.environ.get("AST_DB_PATH", ".ast-index.db")
+    log.info("Opening AST database: %s", _db_path)
 
-    _db = ASTDatabase(db_path)
+    _db = ASTDatabase(_db_path)
     _search = SymbolSearch(_db)
     _search.build_index()
+    _db_inode, _db_mtime = _get_db_stat()
 
     stats = _db.stats()
     log.info("AST index loaded: %d symbols, %d references, %d files",
@@ -234,6 +280,7 @@ async def ast_search(params: SearchInput) -> str:
     Returns:
         str: JSON with ranked search results including symbol, signature, file, lines, snippet, score
     """
+    _ensure_db_fresh()
     results = _search.search(params.query, limit=params.limit, kinds=params.kinds)
 
     if not results:
@@ -283,6 +330,7 @@ async def ast_get_symbol(params: SymbolInput) -> str:
     Returns:
         str: JSON with symbol definition including signature, file, lines, body, doc
     """
+    _ensure_db_fresh()
     matches = _db.find_symbols_by_name(params.name)
 
     if not matches:
@@ -334,6 +382,7 @@ async def ast_get_outline(params: OutlineInput) -> str:
     Returns:
         str: JSON with class/file outline including member signatures
     """
+    _ensure_db_fresh()
     # Try as a class first
     matches = _db.find_symbols_by_name(params.name)
     class_matches = [m for m in matches if m.kind in ("class", "struct", "class_template")]
@@ -422,6 +471,7 @@ async def ast_get_references(params: ReferencesInput) -> str:
     Returns:
         str: JSON with list of reference sites including caller, file, line, context
     """
+    _ensure_db_fresh()
     matches = _db.find_symbols_by_name(params.name)
 
     if not matches:
@@ -473,6 +523,7 @@ async def ast_get_hierarchy(params: HierarchyInput) -> str:
     Returns:
         str: JSON with bases and derived classes, each with name, file, line
     """
+    _ensure_db_fresh()
     matches = _db.find_symbols_by_name(params.name)
     class_matches = [m for m in matches if m.kind in ("class", "struct", "class_template")]
 
@@ -548,7 +599,7 @@ async def ast_index(params: IndexInput) -> str:
         cc_dir = str(target.parent)
         target = target.parent
 
-    indexer = Indexer(_db, compile_commands_dir=cc_dir)
+    indexer = Indexer(_db, compile_commands_dir=cc_dir, project_root=str(target))
 
     if cc_dir and (Path(cc_dir) / "compile_commands.json").exists():
         result = indexer.index_from_compile_commands(force=params.force)
@@ -618,7 +669,8 @@ def main():
         # Direct indexing without MCP server
         db = ASTDatabase(args.db)
         from .indexer import Indexer
-        indexer = Indexer(db, compile_commands_dir=args.compile_commands)
+        indexer = Indexer(db, compile_commands_dir=args.compile_commands,
+                         project_root=args.path)
 
         if args.compile_commands and (Path(args.compile_commands) / "compile_commands.json").exists():
             result = indexer.index_from_compile_commands(force=args.force)

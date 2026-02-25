@@ -59,6 +59,7 @@ class ASTDatabase:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
+        self.conn.execute("PRAGMA busy_timeout=5000")
         self._create_tables()
 
     def _create_tables(self):
@@ -108,6 +109,27 @@ class ASTDatabase:
             CREATE INDEX IF NOT EXISTS idx_refs_file ON refs(file);
         """)
         self.conn.commit()
+
+        # Add unique index on refs, deduplicating existing data if needed
+        try:
+            self.conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_refs_unique "
+                "ON refs(referencing_usr, referenced_usr, file, line)"
+            )
+            self.conn.commit()
+        except sqlite3.IntegrityError:
+            # Existing duplicates — deduplicate then create index
+            self.conn.execute("""
+                DELETE FROM refs WHERE id NOT IN (
+                    SELECT MIN(id) FROM refs
+                    GROUP BY referencing_usr, referenced_usr, file, line
+                )
+            """)
+            self.conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_refs_unique "
+                "ON refs(referencing_usr, referenced_usr, file, line)"
+            )
+            self.conn.commit()
 
     # -- File tracking --
 
@@ -195,7 +217,7 @@ class ASTDatabase:
 
     def add_reference(self, ref: Reference):
         self.conn.execute(
-            """INSERT INTO refs (referencing_usr, referenced_usr, file, line, context)
+            """INSERT OR IGNORE INTO refs (referencing_usr, referenced_usr, file, line, context)
                VALUES (?, ?, ?, ?, ?)""",
             (ref.referencing_usr, ref.referenced_usr, ref.file, ref.line, ref.context),
         )

@@ -249,12 +249,29 @@ def _get_line_at(line_num: int, source_lines: list[str]) -> str:
 class Indexer:
     """Indexes C++ source files using libclang."""
 
-    def __init__(self, db: ASTDatabase, compile_commands_dir: str | None = None):
+    def __init__(self, db: ASTDatabase, compile_commands_dir: str | None = None,
+                 project_root: str | None = None):
         _init_clang()
         self.db = db
         self.index = ci.Index.create()
         self.compile_commands_dir = compile_commands_dir
         self._compdb = None
+
+        # Project root: headers under this path are indexed alongside .cpp files.
+        # Falls back to parent of compile_commands_dir (e.g. cmake-build-debug/..)
+        if project_root:
+            self.project_root = str(Path(project_root).resolve()) + os.sep
+        elif compile_commands_dir:
+            self.project_root = str(Path(compile_commands_dir).resolve().parent) + os.sep
+        else:
+            self.project_root = None
+
+        # Track headers already indexed in this session to avoid redundant work.
+        # Each header is fully indexed by the first .cpp that includes it;
+        # subsequent .cpp files skip the header's subtree (references FROM .cpp
+        # files are still recorded since those cursors are in the .cpp itself).
+        self._indexed_headers: set[str] = set()
+
         if compile_commands_dir:
             try:
                 self._compdb = ci.CompilationDatabase.fromDirectory(compile_commands_dir)
@@ -333,9 +350,23 @@ class Indexer:
         # Clear old data for this file
         self.db.delete_file_data(filepath)
 
-        # Walk the AST
+        # Walk the AST — collect symbols and refs in memory, then batch-write
         sym_count = 0
         ref_count = 0
+        pending_symbols: list[Symbol] = []
+        pending_refs: list[Reference] = []
+
+        # Source line cache: read header files on demand for body extraction
+        source_cache: dict[str, list[str]] = {filepath: source_lines}
+
+        def get_source_lines(file_path: str) -> list[str]:
+            if file_path not in source_cache:
+                try:
+                    text = Path(file_path).read_text(errors="replace")
+                    source_cache[file_path] = text.splitlines()
+                except Exception:
+                    source_cache[file_path] = []
+            return source_cache[file_path]
 
         # Track which function/method we're currently inside for reference context
         scope_stack: list[str] = []  # stack of USRs
@@ -343,9 +374,14 @@ class Indexer:
         def visit(cursor, depth=0):
             nonlocal sym_count, ref_count
 
-            # Skip cursors not in this file
-            if cursor.location.file and str(cursor.location.file) != filepath:
-                return
+            # Skip cursors outside the project, and skip headers already indexed
+            cursor_file = os.path.realpath(str(cursor.location.file)) if cursor.location.file else None
+            if cursor_file and cursor_file != filepath:
+                if not self.project_root or not cursor_file.startswith(self.project_root):
+                    return
+                if cursor_file in self._indexed_headers:
+                    return
+            effective_file = cursor_file or filepath
 
             kind = cursor.kind
             kind_str = SYMBOL_KINDS.get(kind)
@@ -359,15 +395,18 @@ class Indexer:
                         visit(child, depth + 1)
                     return
 
-                # Only index definitions, not forward declarations
-                # (except for classes in headers, where the class decl IS the definition)
+                # Only index definitions, not forward declarations.
+                # For classes, is_definition() is True for the full declaration
+                # with members (class Foo { ... }) and False for forward
+                # declarations (class Foo;). We skip forward declarations to
+                # prevent them from overwriting the real definition via upsert.
                 is_definition = cursor.is_definition()
                 is_class_like = kind in (
                     ci.CursorKind.CLASS_DECL, ci.CursorKind.STRUCT_DECL,
                     ci.CursorKind.ENUM_DECL, ci.CursorKind.CLASS_TEMPLATE,
                 )
 
-                if is_definition or is_class_like:
+                if is_definition:
                     # Get parent scope
                     parent = cursor.semantic_parent
                     parent_usr = ""
@@ -380,7 +419,8 @@ class Indexer:
                     if is_class_like:
                         bases_usrs, bases_names = _get_bases(cursor)
 
-                    body = _extract_source(cursor, source_lines) if is_definition else ""
+                    lines = get_source_lines(effective_file)
+                    body = _extract_source(cursor, lines) if is_definition else ""
 
                     sym = Symbol(
                         usr=usr,
@@ -393,7 +433,7 @@ class Indexer:
                         attributes=_get_attributes(cursor),
                         parent_usr=parent_usr,
                         parent_name=parent_name,
-                        file=filepath,
+                        file=effective_file,
                         line_start=cursor.extent.start.line if cursor.extent else 0,
                         line_end=cursor.extent.end.line if cursor.extent else 0,
                         doc=_get_doc_comment(cursor),
@@ -401,7 +441,7 @@ class Indexer:
                         bases=bases_usrs,
                         base_names=bases_names,
                     )
-                    self.db.upsert_symbol(sym)
+                    pending_symbols.append(sym)
                     sym_count += 1
 
                 # Push this symbol as current scope for reference tracking
@@ -418,15 +458,16 @@ class Indexer:
                     ref_usr = ref_cursor.get_usr()
                     if ref_usr and scope_stack:
                         line = cursor.location.line
-                        context = _get_line_at(line, source_lines)
+                        lines = get_source_lines(effective_file)
+                        context = _get_line_at(line, lines)
                         ref = Reference(
                             referencing_usr=scope_stack[-1],
                             referenced_usr=ref_usr,
-                            file=filepath,
+                            file=effective_file,
                             line=line,
                             context=context,
                         )
-                        self.db.add_reference(ref)
+                        pending_refs.append(ref)
                         ref_count += 1
 
             # Recurse into children
@@ -434,6 +475,17 @@ class Indexer:
                 visit(child, depth + 1)
 
         visit(tu.cursor)
+
+        # Batch-write all collected data in a single transaction
+        header_files = {hf for hf in source_cache if hf != filepath}
+        self.db.delete_file_data(filepath)
+        for sym in pending_symbols:
+            self.db.upsert_symbol(sym)
+        for ref in pending_refs:
+            self.db.add_reference(ref)
+
+        # Mark visited headers so subsequent .cpp files skip them
+        self._indexed_headers.update(header_files)
 
         # Record the file
         self.db.upsert_file(FileRecord(

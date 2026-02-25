@@ -11,6 +11,9 @@ build/
 
 # Index databases (generated per-project)
 *.ast-index.db
+*.db-shm
+*.db-wal
+
 
 # macOS
 .DS_Store

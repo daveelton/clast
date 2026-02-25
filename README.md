@@ -39,18 +39,49 @@ git submodule add <repo-url> clast
 cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 ```
 
+For CLion: Settings > Build, Execution, Deployment > CMake — append
+`-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` to the "CMake options" field, then rebuild.
+
 ### 2. Index your project
 
-```bash
-# With compile_commands.json (recommended — accurate macro/include resolution):
-clang-ast-mcp index /path/to/your/project \
-  --compile-commands /path/to/build \
-  --db /path/to/your/project/.ast-index.db
+There are two ways to run the indexer: standalone or via CMake.
 
-# Without compile_commands.json (falls back to -std=c++17):
-clang-ast-mcp index /path/to/your/project \
-  --db /path/to/your/project/.ast-index.db
+#### Option A: Standalone (simplest)
+
+Run the indexer directly from the command line:
+
+```bash
+cd clast
+./index.sh                              # auto-finds compile_commands.json
+./index.sh /path/to/cmake-build-debug   # or specify the build dir
+./index.sh --force                       # re-index everything
 ```
+
+This works well when all headers exist before indexing. If your project
+generates headers during the build (e.g. JUCE's `JuceHeader.h`), build first,
+then run `index.sh`.
+
+#### Option B: CMake integration
+
+For projects with generated headers, integrate the indexer as a CMake build
+target. This guarantees the index runs after the build, so all headers exist.
+
+Add to your `CMakeLists.txt`:
+
+```cmake
+include(clast/cmake/ClastIndex.cmake)
+add_clast_index(YourMainTarget)
+```
+
+Then build the index explicitly:
+
+```bash
+cmake --build cmake-build-debug --target ast-index
+```
+
+The `ast-index` target depends on your main target, so it will build your
+project first if needed. It is not part of the default `all` target — it
+only runs when you ask for it.
 
 ### 3. Configure Claude Code
 
@@ -61,7 +92,7 @@ Add to your project's `.mcp.json`:
   "mcpServers": {
     "clang-ast": {
       "command": "./clast/.venv/bin/python3",
-      "args": ["-m", "clang_ast_mcp", "serve", "--db", ".ast-index.db"],
+      "args": ["-m", "clang_ast_mcp", "serve", "--db", "./clast/.ast-index.db"],
       "env": {
         "LIBCLANG_PATH": "/opt/homebrew/opt/llvm/lib/libclang.dylib"
       }
