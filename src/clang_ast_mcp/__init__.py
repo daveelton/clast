@@ -1,0 +1,1 @@
+"""Clang AST MCP Server — Semantic C++ code index for Claude Code."""

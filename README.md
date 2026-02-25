@@ -23,9 +23,12 @@ instead of making Claude read entire files.
 ## Install
 
 ```bash
+# Standalone:
 pip install -e .
-# Or install dependencies manually:
-pip install mcp pydantic rank-bm25
+
+# As a git submodule in another project:
+git submodule add <repo-url> clast
+./clast/bootstrap.sh
 ```
 
 ## Quick start
@@ -57,11 +60,10 @@ Add to your project's `.mcp.json`:
 {
   "mcpServers": {
     "clang-ast": {
-      "command": "python3",
-      "args": ["-m", "clang_ast_mcp", "serve", "--db", "/path/to/your/project/.ast-index.db"],
+      "command": "./clast/.venv/bin/python3",
+      "args": ["-m", "clang_ast_mcp", "serve", "--db", ".ast-index.db"],
       "env": {
-        "PYTHONPATH": "/path/to/clang-ast-mcp/src",
-        "LIBCLANG_PATH": "/usr/lib/x86_64-linux-gnu/libclang-18.so"
+        "LIBCLANG_PATH": "/opt/homebrew/opt/llvm/lib/libclang.dylib"
       }
     }
   }
