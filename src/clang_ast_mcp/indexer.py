@@ -16,8 +16,6 @@ import os
 import sys
 from pathlib import Path
 
-# Use system python3-clang-18 bindings
-sys.path.insert(0, "/usr/lib/python3/dist-packages")
 import clang.cindex as ci
 
 from .db import ASTDatabase, FileRecord, Reference, Symbol
