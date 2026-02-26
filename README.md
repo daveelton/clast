@@ -20,18 +20,18 @@ instead of making Claude read entire files.
 - **python3-clang** (matching version: `apt install python3-clang-18`)
 - **compile_commands.json** from CMake (recommended but not required)
 
-## Install
+## Quick start
+
+### 0. Clone into your C++ project
+
+From your project root, clone the repo and add it to `.gitignore` so neither
+the tool nor its index database get committed to your project:
 
 ```bash
-# Standalone:
-pip install -e .
-
-# As a git submodule in another project:
-git submodule add <repo-url> clast
+git clone git@github.com:daveelton/clast.git
+echo "clast/" >> .gitignore
 ./clast/bootstrap.sh
 ```
-
-## Quick start
 
 ### 1. Generate compile_commands.json (if using CMake)
 
@@ -166,5 +166,19 @@ clang-ast-mcp index /path/to/JUCE/modules \
   --db /path/to/your/project/.ast-index.db
 ```
 
-This gives Claude access to JUCE class outlines and API signatures without 
+This gives Claude access to JUCE class outlines and API signatures without
 indexing implementation files.
+
+## Xcode projects
+
+Xcode doesn't produce `compile_commands.json` natively. Use
+[Bear](https://github.com/rizsotto/Bear) to generate one by intercepting
+compiler calls during a real build:
+
+```bash
+brew install bear
+bear -- xcodebuild -project Foo.xcodeproj -scheme Foo build
+```
+
+Then run `./clast/index.sh` as usual — it will find the generated
+`compile_commands.json` in the project root.
