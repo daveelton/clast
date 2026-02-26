@@ -301,6 +301,47 @@ class Indexer:
             except ci.CompilationDatabaseError:
                 log.warning("No compile_commands.json found in %s", compile_commands_dir)
 
+    @staticmethod
+    def _fixup_compile_args(args: list[str]) -> list[str]:
+        """Fix compile args for libclang compatibility.
+
+        - Dedup -arch flags (libclang can't handle universal builds)
+        - Add -isysroot on macOS if missing (libclang doesn't use implicit SDK)
+        """
+        import platform
+        import subprocess
+        import sys
+
+        # --- deduplicate -arch flags, keeping the native architecture ---
+        native = platform.machine()  # e.g. "arm64" or "x86_64"
+        arch_indices: list[tuple[int, str]] = []
+        for i, arg in enumerate(args):
+            if arg == "-arch" and i + 1 < len(args):
+                arch_indices.append((i, args[i + 1]))
+
+        if len(arch_indices) > 1:
+            keep_arch = native if any(a == native for _, a in arch_indices) else arch_indices[0][1]
+            remove_indices: set[int] = set()
+            for idx, arch in arch_indices:
+                if arch != keep_arch:
+                    remove_indices.add(idx)
+                    remove_indices.add(idx + 1)
+            args = [a for i, a in enumerate(args) if i not in remove_indices]
+
+        # --- add -isysroot on macOS if not already present ---
+        if sys.platform == "darwin" and "-isysroot" not in args:
+            try:
+                sdk = subprocess.check_output(
+                    ["xcrun", "--sdk", "macosx", "--show-sdk-path"],
+                    text=True, timeout=5,
+                ).strip()
+                if sdk:
+                    args.extend(["-isysroot", sdk])
+            except Exception:
+                pass
+
+        return args
+
     def _get_compile_args(self, filepath: str) -> list[str]:
         """Get compile arguments for a file from compile_commands.json."""
         if self._compdb:
@@ -318,7 +359,7 @@ class Indexer:
                         if arg == filepath or arg.endswith(Path(filepath).name):
                             continue
                         args.append(arg)
-                    return args
+                    return self._fixup_compile_args(args)
             except Exception as e:
                 log.debug("Failed to get compile commands for %s: %s", filepath, e)
         # Fallback: basic C++17 flags
