@@ -161,7 +161,7 @@ indexing implementation files.
 
 ## Xcode projects
 
-Xcode doesn't produce `compile_commands.json` natively. Use
+Xcode doesn't produce `compile_commands.json` natively. You may be able to use
 [Bear](https://github.com/rizsotto/Bear) to generate one by intercepting
 compiler calls during a real build:
 
@@ -172,3 +172,6 @@ bear -- xcodebuild -project Foo.xcodeproj -scheme Foo build
 
 Then run `./clast/index.sh` as usual — it will find the generated
 `compile_commands.json` in the project root.
+
+## LLM Generated Code Caveat Emptor
+The content of this project contains largely LLM-generated code with all the benefits and limitations that entails.
