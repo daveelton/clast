@@ -27,6 +27,7 @@ function(add_clast_index DEPENDS_TARGET)
             --db "${CLAST_DB}"
         DEPENDS ${DEPENDS_TARGET}
         COMMENT "Updating clast AST index"
+        USES_TERMINAL
         VERBATIM
     )
 endfunction()

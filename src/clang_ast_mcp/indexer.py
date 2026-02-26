@@ -22,6 +22,21 @@ from .db import ASTDatabase, FileRecord, Reference, Symbol
 
 log = logging.getLogger(__name__)
 
+# ANSI escape to clear from cursor to end of line
+_CLEAR_EOL = "\033[K"
+
+
+def _progress(i: int, total: int, name: str) -> None:
+    """Overwrite the current terminal line with a progress counter."""
+    sys.stderr.write(f"\r{_CLEAR_EOL}[{i}/{total}] {name}")
+    sys.stderr.flush()
+
+
+def _progress_done() -> None:
+    """Clear the progress line after the loop finishes."""
+    sys.stderr.write(f"\r{_CLEAR_EOL}")
+    sys.stderr.flush()
+
 # Cursor kinds we extract as symbols
 SYMBOL_KINDS = {
     ci.CursorKind.FUNCTION_DECL: "function",
@@ -337,15 +352,26 @@ class Indexer:
         )
 
         if not tu:
+            _progress_done()
             log.error("Failed to parse: %s", filepath)
             return {"file": filepath, "status": "parse_error"}
 
         # Log diagnostics (but don't fail - partial ASTs are still useful)
-        errors = [d for d in tu.diagnostics if d.severity >= ci.Diagnostic.Error]
-        if errors:
-            log.warning("%s: %d errors (indexing partial AST)", filepath, len(errors))
-            for e in errors[:3]:
-                log.debug("  %s", e)
+        diags = [d for d in tu.diagnostics if d.severity >= ci.Diagnostic.Error]
+        if diags:
+            missing = [d for d in diags if "file not found" in d.spelling]
+            other = [d for d in diags if "file not found" not in d.spelling]
+
+            if missing:
+                _progress_done()
+                headers = [d.spelling.split("'")[1] for d in missing if "'" in d.spelling]
+                log.warning("%s: missing headers: %s (partial AST)",
+                            Path(filepath).name, ", ".join(headers) or "unknown")
+            if other:
+                _progress_done()
+                log.error("%s: %d compile errors (partial AST)", Path(filepath).name, len(other))
+                for e in other[:3]:
+                    log.error("  %s", e.spelling)
 
         # Clear old data for this file
         self.db.delete_file_data(filepath)
@@ -524,13 +550,15 @@ class Indexer:
         log.info("Found %d files to index", total)
         results = []
         for i, fpath in enumerate(all_files, 1):
+            _progress(i, total, Path(fpath).name)
             try:
-                log.info("[%d/%d] %s", i, total, Path(fpath).name)
                 result = self.index_file(fpath, force=force)
                 results.append(result)
             except Exception as e:
+                _progress_done()
                 log.error("Failed to index %s: %s", fpath, e)
                 results.append({"file": fpath, "status": "error", "error": str(e)})
+        _progress_done()
 
         indexed = sum(1 for r in results if r["status"] == "indexed")
         unchanged = sum(1 for r in results if r.get("status") == "unchanged")
@@ -564,13 +592,15 @@ class Indexer:
         log.info("Found %d files to index", total)
         results = []
         for i, fpath in enumerate(files, 1):
+            _progress(i, total, Path(fpath).name)
             try:
-                log.info("[%d/%d] %s", i, total, Path(fpath).name)
                 result = self.index_file(fpath, force=force)
                 results.append(result)
             except Exception as e:
+                _progress_done()
                 log.error("Failed to index %s: %s", fpath, e)
                 results.append({"file": fpath, "status": "error", "error": str(e)})
+        _progress_done()
 
         indexed = sum(1 for r in results if r["status"] == "indexed")
         unchanged = sum(1 for r in results if r.get("status") == "unchanged")
