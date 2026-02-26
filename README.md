@@ -101,20 +101,10 @@ Add to your project's `.mcp.json`:
 }
 ```
 
-Add to your `CLAUDE.md`:
-
-```markdown
-## Code exploration
-
-Before reading files or using grep, use the AST index tools to find code:
-- `ast_search` — keyword search for symbols (use when you don't know the exact name)
-- `ast_get_symbol` — get a symbol's full definition by name
-- `ast_get_outline` — get a class interface or file structure (no bodies)
-- `ast_get_references` — find all call sites / usages of a symbol
-- `ast_get_hierarchy` — get inheritance tree for a class
-
-Only fall back to Read/Grep if the AST tools don't return enough context.
-```
+`bootstrap.sh` will offer to append clast instructions to your project's
+`CLAUDE.md`. If you prefer to do it manually, copy the contents of
+[CLAUDE-CLAST-ADDITION.md](CLAUDE-CLAST-ADDITION.md) into your project's
+`CLAUDE.md`.
 
 ## MCP Tools
 

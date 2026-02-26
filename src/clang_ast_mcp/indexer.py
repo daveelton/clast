@@ -22,20 +22,27 @@ from .db import ASTDatabase, FileRecord, Reference, Symbol
 
 log = logging.getLogger(__name__)
 
-# ANSI escape to clear from cursor to end of line
-_CLEAR_EOL = "\033[K"
+# Progress display — prints every N files to avoid flooding the output.
+_PROGRESS_INTERVAL = 25
 
 
 def _progress(i: int, total: int, name: str) -> None:
-    """Overwrite the current terminal line with a progress counter."""
-    sys.stderr.write(f"\r{_CLEAR_EOL}[{i}/{total}] {name}")
-    sys.stderr.flush()
+    """Show indexing progress periodically."""
+    if i == 1 or i == total or i % _PROGRESS_INTERVAL == 0:
+        sys.stderr.write(f"[{i}/{total}] {name}\n")
+        sys.stderr.flush()
+
+
+def _progress_clear() -> None:
+    """No-op — kept for call-site consistency."""
+
+
+def _progress_redraw() -> None:
+    """No-op — kept for call-site consistency."""
 
 
 def _progress_done() -> None:
-    """Clear the progress line after the loop finishes."""
-    sys.stderr.write(f"\r{_CLEAR_EOL}")
-    sys.stderr.flush()
+    """No-op — kept for call-site consistency."""
 
 # Cursor kinds we extract as symbols
 SYMBOL_KINDS = {
@@ -352,8 +359,9 @@ class Indexer:
         )
 
         if not tu:
-            _progress_done()
+            _progress_clear()
             log.error("Failed to parse: %s", filepath)
+            _progress_redraw()
             return {"file": filepath, "status": "parse_error"}
 
         # Log diagnostics (but don't fail - partial ASTs are still useful)
@@ -363,15 +371,17 @@ class Indexer:
             other = [d for d in diags if "file not found" not in d.spelling]
 
             if missing:
-                _progress_done()
+                _progress_clear()
                 headers = [d.spelling.split("'")[1] for d in missing if "'" in d.spelling]
                 log.warning("%s: missing headers: %s (partial AST)",
                             Path(filepath).name, ", ".join(headers) or "unknown")
+                _progress_redraw()
             if other:
-                _progress_done()
+                _progress_clear()
                 log.error("%s: %d compile errors (partial AST)", Path(filepath).name, len(other))
                 for e in other[:3]:
                     log.error("  %s", e.spelling)
+                _progress_redraw()
 
         # Clear old data for this file
         self.db.delete_file_data(filepath)
@@ -555,8 +565,9 @@ class Indexer:
                 result = self.index_file(fpath, force=force)
                 results.append(result)
             except Exception as e:
-                _progress_done()
+                _progress_clear()
                 log.error("Failed to index %s: %s", fpath, e)
+                _progress_redraw()
                 results.append({"file": fpath, "status": "error", "error": str(e)})
         _progress_done()
 
@@ -597,8 +608,9 @@ class Indexer:
                 result = self.index_file(fpath, force=force)
                 results.append(result)
             except Exception as e:
-                _progress_done()
+                _progress_clear()
                 log.error("Failed to index %s: %s", fpath, e)
+                _progress_redraw()
                 results.append({"file": fpath, "status": "error", "error": str(e)})
         _progress_done()
 

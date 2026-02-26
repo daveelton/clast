@@ -6,7 +6,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/.venv"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CLAUDE_MD="$PROJECT_DIR/CLAUDE.md"
+ADDITION="$SCRIPT_DIR/CLAUDE-CLAST-ADDITION.md"
 
+# ── Create venv and install dependencies ────────────────────────────
 if [ ! -d "$VENV_DIR" ]; then
     echo "Creating venv at $VENV_DIR ..."
     python3 -m venv "$VENV_DIR"
@@ -18,8 +22,27 @@ echo "Installing clast dependencies ..."
 
 echo ""
 echo "Done. venv python: $VENV_DIR/bin/python3"
+
+# ── Offer to update CLAUDE.md ──────────────────────────────────────
 echo ""
-echo "To index your project:"
-echo "  $VENV_DIR/bin/clang-ast-mcp index /path/to/project \\"
-echo "    --compile-commands /path/to/build \\"
-echo "    --db /path/to/project/.ast-index.db"
+if [ -f "$CLAUDE_MD" ]; then
+    if grep -q "ast_search" "$CLAUDE_MD" 2>/dev/null; then
+        echo "CLAUDE.md already contains clast instructions — skipping."
+    else
+        echo "Found $CLAUDE_MD"
+        read -rp "Append clast instructions to CLAUDE.md? [Y/n] " answer
+        if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
+            echo "" >> "$CLAUDE_MD"
+            cat "$ADDITION" >> "$CLAUDE_MD"
+            echo "Updated CLAUDE.md with clast instructions."
+        else
+            echo "Skipped. You can add them manually — see:"
+            echo "  $ADDITION"
+        fi
+    fi
+else
+    echo "No CLAUDE.md found at $PROJECT_DIR"
+    echo "To help Claude Code use the AST index, add the contents of"
+    echo "  $ADDITION"
+    echo "to your project's CLAUDE.md."
+fi
