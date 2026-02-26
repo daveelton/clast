@@ -372,21 +372,17 @@ class Indexer:
         """
         filepath = str(Path(filepath).resolve())
 
+        # Read source (used for both hash check and body extraction)
+        source_text = Path(filepath).read_text(errors="replace")
+        source_lines = source_text.splitlines()
+        content_hash = hashlib.sha256(source_text.encode()).hexdigest()
+
         # Check if file needs re-indexing
         if not force:
-            content = Path(filepath).read_bytes()
-            content_hash = hashlib.sha256(content).hexdigest()
             existing = self.db.get_file(filepath)
             if existing and existing.hash == content_hash:
                 log.debug("Skipping unchanged file: %s", filepath)
                 return {"file": filepath, "status": "unchanged"}
-
-        log.debug("Indexing: %s", filepath)
-
-        # Read source for body extraction
-        source_text = Path(filepath).read_text(errors="replace")
-        source_lines = source_text.splitlines()
-        content_hash = hashlib.sha256(source_text.encode()).hexdigest()
 
         # Parse with clang
         args = self._get_compile_args(filepath)
@@ -639,7 +635,14 @@ class Indexer:
         with open(cc_path) as f:
             entries = json.load(f)
 
-        files = [entry["file"] for entry in entries if "file" in entry]
+        # deduplicate — same file may appear per-target (VST3, AU, AAX, etc.)
+        seen: set[str] = set()
+        files: list[str] = []
+        for entry in entries:
+            f = entry.get("file")
+            if f and f not in seen:
+                seen.add(f)
+                files.append(f)
         total = len(files)
         log.info("Found %d files to index", total)
         results = []
