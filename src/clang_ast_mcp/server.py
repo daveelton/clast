@@ -12,6 +12,7 @@ Usage:
     python -m clang_ast_mcp.server serve --db /path/to/project/.ast-index.db
 """
 
+import functools
 import json
 import logging
 import os
@@ -28,6 +29,44 @@ from .db import ASTDatabase
 from .search import SymbolSearch
 
 log = logging.getLogger(__name__)
+
+# ── Active request tracking ─────────────────────────────────────────
+
+_active_tool: str | None = None
+_active_since: float = 0.0
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate (~4 chars per token for code/English)."""
+    return (len(text) + 3) // 4
+
+
+def _log_tool(fn):
+    """Decorator that logs tool entry/exit with timing and response size."""
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        global _active_tool, _active_since
+        name = fn.__name__
+        params = args[0] if args else None
+        param_str = f" ({params})" if params else ""
+        _active_tool = name
+        _active_since = time.monotonic()
+        log.info("→ %s%s", name, param_str)
+        try:
+            result = await fn(*args, **kwargs)
+            elapsed = time.monotonic() - _active_since
+            chars = len(result) if isinstance(result, str) else 0
+            tokens = _estimate_tokens(result) if isinstance(result, str) else 0
+            log.info("← %s %.1fs %d chars (~%d tokens)", name, elapsed, chars, tokens)
+            return result
+        except Exception as e:
+            elapsed = time.monotonic() - _active_since
+            log.error("✗ %s %.1fs: %s", name, elapsed, e)
+            raise
+        finally:
+            _active_tool = None
+    return wrapper
+
 
 # ── Global state (initialized in lifespan) ──────────────────────────
 
@@ -72,7 +111,9 @@ def _ensure_db_fresh():
 
     _db = ASTDatabase(_db_path)
     _search = SymbolSearch(_db)
+    t0 = time.monotonic()
     _search.build_index()
+    log.info("BM25 index rebuilt in %.1fs", time.monotonic() - t0)
     _db_inode = inode
     _db_mtime = mtime
     stats = _db.stats()
@@ -268,6 +309,7 @@ def _format_symbol(sym, include_body: bool = True) -> dict:
         "openWorldHint": False,
     },
 )
+@_log_tool
 async def ast_search(params: SearchInput) -> str:
     """Search for C++ symbols by keyword or natural language query.
 
@@ -319,6 +361,7 @@ async def ast_search(params: SearchInput) -> str:
         "openWorldHint": False,
     },
 )
+@_log_tool
 async def ast_get_symbol(params: SymbolInput) -> str:
     """Get the full definition of a C++ symbol by name.
 
@@ -372,6 +415,7 @@ async def ast_get_symbol(params: SymbolInput) -> str:
         "openWorldHint": False,
     },
 )
+@_log_tool
 async def ast_get_outline(params: OutlineInput) -> str:
     """Get the outline (member signatures, no bodies) of a class or file.
 
@@ -462,6 +506,7 @@ async def ast_get_outline(params: OutlineInput) -> str:
         "openWorldHint": False,
     },
 )
+@_log_tool
 async def ast_get_references(params: ReferencesInput) -> str:
     """Find all references and call sites for a symbol.
 
@@ -543,6 +588,7 @@ async def ast_get_references(params: ReferencesInput) -> str:
         "openWorldHint": False,
     },
 )
+@_log_tool
 async def ast_get_hierarchy(params: HierarchyInput) -> str:
     """Get the inheritance hierarchy for a class.
 
@@ -604,6 +650,7 @@ async def ast_get_hierarchy(params: HierarchyInput) -> str:
         "openWorldHint": False,
     },
 )
+@_log_tool
 async def ast_index(params: IndexInput) -> str:
     """Index or re-index a C++ project directory.
 
@@ -657,6 +704,7 @@ async def ast_index(params: IndexInput) -> str:
         "openWorldHint": False,
     },
 )
+@_log_tool
 async def ast_status() -> str:
     """Get the current status of the AST index.
 

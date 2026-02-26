@@ -91,8 +91,8 @@ Add to your project's `.mcp.json`:
 {
   "mcpServers": {
     "clang-ast": {
-      "command": "./clast/.venv/bin/python3",
-      "args": ["-m", "clang_ast_mcp", "serve", "--db", "./clast/.ast-index.db"],
+      "command": "bash",
+      "args": ["-c", "./clast/.venv/bin/python3 -m clang_ast_mcp serve --db ./clast/.ast-index.db 2>>./clast/mcp.log"],
       "env": {
         "LIBCLANG_PATH": "/opt/homebrew/opt/llvm/lib/libclang.dylib"
       }
@@ -100,6 +100,9 @@ Add to your project's `.mcp.json`:
   }
 }
 ```
+
+Logs are appended to `./clast/mcp.log` — use `tail -f ./clast/mcp.log` to
+watch tool calls, response sizes, and timing in real time.
 
 `bootstrap.sh` will offer to append clast instructions to your project's
 `CLAUDE.md`. If you prefer to do it manually, copy the contents of

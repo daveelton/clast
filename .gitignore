@@ -14,6 +14,9 @@ build/
 *.db-shm
 *.db-wal
 
+# MCP server log
+mcp.log
+
 
 # macOS
 .DS_Store
@@ -22,3 +25,4 @@ build/
 .idea/
 .vscode/
 *.swp
+/docs/future-features.md
