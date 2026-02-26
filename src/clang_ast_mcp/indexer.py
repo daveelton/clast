@@ -526,7 +526,7 @@ class Indexer:
             "status": "indexed",
             "symbols": sym_count,
             "references": ref_count,
-            "errors": len(errors),
+            "errors": len(diags),
         }
 
     def index_directory(
