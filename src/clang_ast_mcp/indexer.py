@@ -301,6 +301,24 @@ class Indexer:
             except ci.CompilationDatabaseError:
                 log.warning("No compile_commands.json found in %s", compile_commands_dir)
 
+    _cached_sysroot: str | None = None
+
+    @staticmethod
+    def _get_macos_sysroot() -> str:
+        """Get macOS SDK path, cached across calls."""
+        if Indexer._cached_sysroot is not None:
+            return Indexer._cached_sysroot
+        import subprocess
+        try:
+            sdk = subprocess.check_output(
+                ["xcrun", "--sdk", "macosx", "--show-sdk-path"],
+                text=True, timeout=5,
+            ).strip()
+            Indexer._cached_sysroot = sdk or ""
+        except Exception:
+            Indexer._cached_sysroot = ""
+        return Indexer._cached_sysroot
+
     @staticmethod
     def _fixup_compile_args(args: list[str]) -> list[str]:
         """Fix compile args for libclang compatibility.
@@ -309,8 +327,6 @@ class Indexer:
         - Add -isysroot on macOS if missing (libclang doesn't use implicit SDK)
         """
         import platform
-        import subprocess
-        import sys
 
         # --- deduplicate -arch flags, keeping the native architecture ---
         native = platform.machine()  # e.g. "arm64" or "x86_64"
@@ -330,15 +346,9 @@ class Indexer:
 
         # --- add -isysroot on macOS if not already present ---
         if sys.platform == "darwin" and "-isysroot" not in args:
-            try:
-                sdk = subprocess.check_output(
-                    ["xcrun", "--sdk", "macosx", "--show-sdk-path"],
-                    text=True, timeout=5,
-                ).strip()
-                if sdk:
-                    args.extend(["-isysroot", sdk])
-            except Exception:
-                pass
+            sdk = Indexer._get_macos_sysroot()
+            if sdk:
+                args.extend(["-isysroot", sdk])
 
         return args
 
