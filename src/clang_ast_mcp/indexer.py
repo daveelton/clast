@@ -318,7 +318,7 @@ class Indexer:
                 log.debug("Skipping unchanged file: %s", filepath)
                 return {"file": filepath, "status": "unchanged"}
 
-        log.info("Indexing: %s", filepath)
+        log.debug("Indexing: %s", filepath)
 
         # Read source for body extraction
         source_text = Path(filepath).read_text(errors="replace")
@@ -512,17 +512,25 @@ class Indexer:
         Returns aggregate stats.
         """
         directory = str(Path(directory).resolve())
-        results = []
+
+        # Collect files first so we can show progress
+        all_files = []
         for root, _dirs, files in os.walk(directory):
             for fname in sorted(files):
                 if any(fname.endswith(ext) for ext in extensions):
-                    fpath = os.path.join(root, fname)
-                    try:
-                        result = self.index_file(fpath, force=force)
-                        results.append(result)
-                    except Exception as e:
-                        log.error("Failed to index %s: %s", fpath, e)
-                        results.append({"file": fpath, "status": "error", "error": str(e)})
+                    all_files.append(os.path.join(root, fname))
+
+        total = len(all_files)
+        log.info("Found %d files to index", total)
+        results = []
+        for i, fpath in enumerate(all_files, 1):
+            try:
+                log.info("[%d/%d] %s", i, total, Path(fpath).name)
+                result = self.index_file(fpath, force=force)
+                results.append(result)
+            except Exception as e:
+                log.error("Failed to index %s: %s", fpath, e)
+                results.append({"file": fpath, "status": "error", "error": str(e)})
 
         indexed = sum(1 for r in results if r["status"] == "indexed")
         unchanged = sum(1 for r in results if r.get("status") == "unchanged")
@@ -552,9 +560,12 @@ class Indexer:
             entries = json.load(f)
 
         files = [entry["file"] for entry in entries if "file" in entry]
+        total = len(files)
+        log.info("Found %d files to index", total)
         results = []
-        for fpath in files:
+        for i, fpath in enumerate(files, 1):
             try:
+                log.info("[%d/%d] %s", i, total, Path(fpath).name)
                 result = self.index_file(fpath, force=force)
                 results.append(result)
             except Exception as e:

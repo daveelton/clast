@@ -659,6 +659,9 @@ def main():
 
     args = parser.parse_args()
 
+    # Force unbuffered stderr so progress appears immediately in CLion/CMake
+    sys.stderr = open(sys.stderr.fileno(), "w", buffering=1, closefd=False)
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
