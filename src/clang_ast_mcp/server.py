@@ -183,6 +183,12 @@ class ReferencesInput(BaseModel):
         description="Maximum references to return",
         ge=1, le=100,
     )
+    context_lines: int = Field(
+        default=3,
+        description="Number of lines of surrounding context to include above and below "
+                    "each reference (like grep -C). 0 = single-line context only.",
+        ge=0, le=15,
+    )
 
 
 class HierarchyInput(BaseModel):
@@ -460,13 +466,17 @@ async def ast_get_references(params: ReferencesInput) -> str:
     """Find all references and call sites for a symbol.
 
     Returns a list of locations where the symbol is called or used, each with
-    the enclosing function name, file path, line number, and a one-line context.
+    the enclosing function name, file path, line number, and context.
     Uses Clang's USR resolution for precision — no false positives from string matching.
+
+    Set context_lines > 0 to include surrounding source lines at each call site
+    (like grep -C), so you can see how the symbol is used without reading the file.
 
     Args:
         params (ReferencesInput): Contains:
             - name (str): Qualified symbol name
             - limit (int): Max references to return
+            - context_lines (int): Lines of surrounding context (0 = single line)
 
     Returns:
         str: JSON with list of reference sites including caller, file, line, context
@@ -493,10 +503,33 @@ async def ast_get_references(params: ReferencesInput) -> str:
             seen.add(key)
             unique_refs.append(ref)
 
+    result_refs = unique_refs[:params.limit]
+
+    # Expand context if requested
+    if params.context_lines > 0:
+        file_cache: dict[str, list[str]] = {}
+        for ref in result_refs:
+            fpath = ref["file"]
+            if fpath not in file_cache:
+                try:
+                    file_cache[fpath] = Path(fpath).read_text(errors="replace").splitlines()
+                except Exception:
+                    file_cache[fpath] = []
+            lines = file_cache[fpath]
+            if lines:
+                line_idx = ref["line"] - 1
+                start = max(0, line_idx - params.context_lines)
+                end = min(len(lines), line_idx + params.context_lines + 1)
+                numbered = [
+                    f"{'>' if i == line_idx else ' '} {i + 1:4d} | {lines[i]}"
+                    for i in range(start, end)
+                ]
+                ref["context"] = "\n".join(numbered)
+
     return json.dumps({
         "symbol": sym.qualified_name,
         "total_references": len(unique_refs),
-        "references": unique_refs[:params.limit],
+        "references": result_refs,
     }, indent=2)
 
 

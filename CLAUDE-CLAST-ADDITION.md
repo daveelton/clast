@@ -1,3 +1,4 @@
+<!-- clast-instructions v2 -->
 ## Code exploration — IMPORTANT
 
 This project has a semantic C++ index (clast). You MUST use it as your
@@ -13,6 +14,7 @@ grep the source tree when the AST tools can answer the question directly.
 3. `ast_get_outline` — get a class or file's interface (signatures, no bodies).
    Use this to understand structure before diving into implementations.
 4. `ast_get_references` — find all call sites / usages of a symbol.
+   Use `context_lines` (e.g. 5) to see surrounding code at each call site.
 5. `ast_get_hierarchy` — get the inheritance tree for a class.
 
 **Only fall back to Read/Grep/Glob when:**
@@ -22,3 +24,4 @@ grep the source tree when the AST tools can answer the question directly.
 
 Using Read to browse .cpp/.h files wastes tokens and is slower than a
 targeted AST query. Prefer multiple small AST queries over reading whole files.
+<!-- /clast-instructions -->
