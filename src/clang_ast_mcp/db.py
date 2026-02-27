@@ -107,6 +107,13 @@ class ASTDatabase:
             CREATE INDEX IF NOT EXISTS idx_refs_referenced ON refs(referenced_usr);
             CREATE INDEX IF NOT EXISTS idx_refs_referencing ON refs(referencing_usr);
             CREATE INDEX IF NOT EXISTS idx_refs_file ON refs(file);
+
+            CREATE TABLE IF NOT EXISTS file_deps (
+                file TEXT NOT NULL,
+                header TEXT NOT NULL,
+                header_mtime REAL NOT NULL,
+                PRIMARY KEY (file, header)
+            );
         """)
         self.conn.commit()
 
@@ -242,12 +249,30 @@ class ASTDatabase:
             for row in rows
         ]
 
+    # -- File dependencies --
+
+    def set_file_deps(self, file: str, deps: list[tuple[str, float]]):
+        """Replace all header dependencies for a file."""
+        self.conn.execute("DELETE FROM file_deps WHERE file = ?", (file,))
+        self.conn.executemany(
+            "INSERT INTO file_deps (file, header, header_mtime) VALUES (?, ?, ?)",
+            [(file, header, mtime) for header, mtime in deps],
+        )
+
+    def get_file_deps(self, file: str) -> list[tuple[str, float]]:
+        """Return header paths and mtimes for a file."""
+        rows = self.conn.execute(
+            "SELECT header, header_mtime FROM file_deps WHERE file = ?", (file,)
+        ).fetchall()
+        return [(row["header"], row["header_mtime"]) for row in rows]
+
     # -- Bulk operations --
 
     def delete_file_data(self, file_path: str):
-        """Remove all symbols and references from a file (for re-indexing)."""
+        """Remove all symbols, references, and deps from a file (for re-indexing)."""
         self.conn.execute("DELETE FROM refs WHERE file = ?", (file_path,))
         self.conn.execute("DELETE FROM symbols WHERE file = ?", (file_path,))
+        self.conn.execute("DELETE FROM file_deps WHERE file = ?", (file_path,))
         self.conn.execute("DELETE FROM files WHERE path = ?", (file_path,))
 
     def commit(self):

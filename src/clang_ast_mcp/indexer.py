@@ -391,8 +391,21 @@ class Indexer:
         if not force:
             existing = self.db.get_file(filepath)
             if existing and existing.hash == content_hash:
-                log.debug("Skipping unchanged file: %s", filepath)
-                return {"file": filepath, "status": "unchanged"}
+                # Check if any header dependency has changed
+                deps = self.db.get_file_deps(filepath)
+                headers_changed = False
+                for header_path, stored_mtime in deps:
+                    try:
+                        current_mtime = os.path.getmtime(header_path)
+                        if current_mtime != stored_mtime:
+                            headers_changed = True
+                            break
+                    except OSError:
+                        headers_changed = True  # header deleted/moved
+                        break
+                if not headers_changed:
+                    log.debug("Skipping unchanged file: %s", filepath)
+                    return {"file": filepath, "status": "unchanged"}
 
         # Parse with clang
         args = self._get_compile_args(filepath)
@@ -570,12 +583,20 @@ class Indexer:
         # Mark visited headers so subsequent .cpp files skip them
         self._indexed_headers.update(header_files)
 
-        # Record the file
+        # Record the file and its header dependencies
         self.db.upsert_file(FileRecord(
             path=filepath,
             mtime=os.path.getmtime(filepath),
             hash=content_hash,
         ))
+        deps = []
+        for hf in source_cache:
+            if hf != filepath:
+                try:
+                    deps.append((hf, os.path.getmtime(hf)))
+                except OSError:
+                    pass
+        self.db.set_file_deps(filepath, deps)
         self.db.commit()
 
         return {
