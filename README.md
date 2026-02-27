@@ -121,6 +121,47 @@ watch tool calls, response sizes, and timing in real time.
 | `ast_index` | Re-index project | After changing files |
 | `ast_status` | Index stats | Check if index is loaded |
 
+## Output format
+
+By default, tool responses are JSON. A **compact** plain-text format is also
+available that uses native C++ syntax instead of JSON field names, saving
+~3,000-5,000 tokens per session. See
+[docs/compact-response-format.md](docs/compact-response-format.md) for the full
+specification and rationale.
+
+Enable it via CLI flag:
+
+```bash
+python3 -m clang_ast_mcp serve --db .ast-index.db --format compact
+```
+
+Or via environment variable:
+
+```bash
+AST_OUTPUT_FORMAT=compact python3 -m clang_ast_mcp serve --db .ast-index.db
+```
+
+In `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "clang-ast": {
+      "command": "bash",
+      "args": ["-c", "./clast/.venv/bin/python3 -m clang_ast_mcp serve --db ./clast/.ast-index.db 2>>./clast/mcp.log"],
+      "env": {
+        "AST_OUTPUT_FORMAT": "compact",
+        "LIBCLANG_PATH": "/opt/homebrew/opt/llvm/lib/libclang.dylib"
+      }
+    }
+  }
+}
+```
+
+The format is server-wide — restart with a different setting to switch. This
+makes A/B comparison straightforward: run a full session in each mode and compare
+token usage from Claude Code's reporting.
+
 ## Architecture
 
 ```

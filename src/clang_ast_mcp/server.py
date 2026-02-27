@@ -26,6 +26,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field, ConfigDict
 
 from .db import ASTDatabase
+from . import format_compact
 from .search import SymbolSearch
 
 log = logging.getLogger(__name__)
@@ -77,6 +78,7 @@ _db_inode: int = 0
 _db_mtime: float = 0.0
 _last_check: float = 0.0
 _CHECK_INTERVAL = 5.0  # seconds between freshness checks
+_output_format: str = "json"  # "json" or "compact" — set via AST_OUTPUT_FORMAT env var
 
 
 def _get_db_stat() -> tuple[int, float]:
@@ -124,7 +126,13 @@ def _ensure_db_fresh():
 @asynccontextmanager
 async def app_lifespan(server: FastMCP):
     """Initialize database and search index on startup."""
-    global _db, _search, _db_path, _db_inode, _db_mtime
+    global _db, _search, _db_path, _db_inode, _db_mtime, _output_format
+
+    _output_format = os.environ.get("AST_OUTPUT_FORMAT", "json").lower()
+    if _output_format not in ("json", "compact"):
+        log.warning("Unknown AST_OUTPUT_FORMAT=%r, defaulting to json", _output_format)
+        _output_format = "json"
+    log.info("Output format: %s", _output_format)
 
     _db_path = os.environ.get("AST_DB_PATH", ".ast-index.db")
     log.info("Opening AST database: %s", _db_path)
@@ -332,7 +340,12 @@ async def ast_search(params: SearchInput) -> str:
     results = _search.search(params.query, limit=params.limit, kinds=params.kinds)
 
     if not results:
+        if _output_format == "compact":
+            return format_compact.format_search(params.query, [])
         return json.dumps({"query": params.query, "results": [], "message": "No matching symbols found."})
+
+    if _output_format == "compact":
+        return format_compact.format_search(params.query, results)
 
     formatted = []
     for r in results:
@@ -383,10 +396,19 @@ async def ast_get_symbol(params: SymbolInput) -> str:
     matches = _db.find_symbols_by_name(params.name)
 
     if not matches:
+        if _output_format == "compact":
+            return format_compact.format_error(
+                f"Symbol '{params.name}' not found.",
+                "Try ast_search with keywords.")
         return json.dumps({
             "error": f"Symbol '{params.name}' not found.",
             "suggestion": "Try ast_search with keywords to discover the correct name.",
         })
+
+    if _output_format == "compact":
+        if len(matches) == 1:
+            return format_compact.format_symbol(matches[0], include_body=params.include_body)
+        return format_compact.format_symbol_list(matches[:10], params.name)
 
     if len(matches) == 1:
         return json.dumps(_format_symbol(matches[0], include_body=params.include_body), indent=2)
@@ -440,6 +462,10 @@ async def ast_get_outline(params: OutlineInput) -> str:
     if class_matches:
         cls = class_matches[0]
         members = _db.get_class_members(cls.usr)
+
+        if _output_format == "compact":
+            return format_compact.format_outline_class(cls, members)
+
         member_sigs = []
         for m in members:
             entry = {"kind": m.kind, "signature": m.signature}
@@ -472,24 +498,32 @@ async def ast_get_outline(params: OutlineInput) -> str:
 
     if file_symbols:
         # Return top-level symbols only (no parent or parent is namespace)
-        top_level = []
-        for s in file_symbols:
-            if not s.parent_usr or s.kind == "namespace":
-                entry = {
-                    "kind": s.kind,
-                    "name": s.qualified_name,
-                    "signature": s.signature,
-                    "lines": [s.line_start, s.line_end],
-                }
-                if s.doc:
-                    entry["doc"] = s.doc
-                top_level.append(entry)
+        top_level = [s for s in file_symbols if not s.parent_usr or s.kind == "namespace"]
+
+        if _output_format == "compact":
+            return format_compact.format_outline_file(name, top_level)
+
+        formatted = []
+        for s in top_level:
+            entry = {
+                "kind": s.kind,
+                "name": s.qualified_name,
+                "signature": s.signature,
+                "lines": [s.line_start, s.line_end],
+            }
+            if s.doc:
+                entry["doc"] = s.doc
+            formatted.append(entry)
 
         return json.dumps({
             "file": name,
-            "declarations": top_level,
+            "declarations": formatted,
         }, indent=2)
 
+    if _output_format == "compact":
+        return format_compact.format_error(
+            f"No class or file matching '{params.name}' found.",
+            "Try ast_search to discover the correct name.")
     return json.dumps({
         "error": f"No class or file matching '{params.name}' found.",
         "suggestion": "Try ast_search to discover the correct name.",
@@ -530,6 +564,10 @@ async def ast_get_references(params: ReferencesInput) -> str:
     matches = _db.find_symbols_by_name(params.name)
 
     if not matches:
+        if _output_format == "compact":
+            return format_compact.format_error(
+                f"Symbol '{params.name}' not found.",
+                "Try ast_search to discover the correct name.")
         return json.dumps({
             "error": f"Symbol '{params.name}' not found.",
             "suggestion": "Try ast_search to discover the correct name.",
@@ -571,6 +609,9 @@ async def ast_get_references(params: ReferencesInput) -> str:
                 ]
                 ref["context"] = "\n".join(numbered)
 
+    if _output_format == "compact":
+        return format_compact.format_references(sym, result_refs, len(unique_refs))
+
     return json.dumps({
         "symbol": sym.qualified_name,
         "total_references": len(unique_refs),
@@ -607,6 +648,10 @@ async def ast_get_hierarchy(params: HierarchyInput) -> str:
     class_matches = [m for m in matches if m.kind in ("class", "struct", "class_template")]
 
     if not class_matches:
+        if _output_format == "compact":
+            return format_compact.format_error(
+                f"Class '{params.name}' not found.",
+                "Try ast_search to discover the correct name.")
         return json.dumps({
             "error": f"Class '{params.name}' not found.",
             "suggestion": "Try ast_search to discover the correct name.",
@@ -631,6 +676,9 @@ async def ast_get_hierarchy(params: HierarchyInput) -> str:
         {"name": d.qualified_name, "file": d.file, "line": d.line_start}
         for d in derived_syms
     ]
+
+    if _output_format == "compact":
+        return format_compact.format_hierarchy(cls, bases, derived)
 
     return json.dumps({
         "symbol": cls.qualified_name,
@@ -691,6 +739,9 @@ async def ast_index(params: IndexInput) -> str:
 
     # Add current DB stats
     result["db_stats"] = _db.stats()
+
+    if _output_format == "compact":
+        return format_compact.format_index(result)
     return json.dumps(result, indent=2)
 
 
@@ -714,6 +765,8 @@ async def ast_status() -> str:
         str: JSON with index statistics
     """
     stats = _db.stats()
+    if _output_format == "compact":
+        return format_compact.format_status(stats)
     return json.dumps(stats, indent=2)
 
 
@@ -730,6 +783,8 @@ def main():
     # serve command
     serve_cmd = sub.add_parser("serve", help="Run as MCP server (stdio)")
     serve_cmd.add_argument("--db", default=".ast-index.db", help="Path to SQLite database")
+    serve_cmd.add_argument("--format", choices=["json", "compact"], default=None,
+                           help="Output format (default: json, or AST_OUTPUT_FORMAT env var)")
 
     # index command
     idx_cmd = sub.add_parser("index", help="Index a C++ project")
@@ -769,6 +824,9 @@ def main():
         import os
         db_path = args.db if hasattr(args, "db") else ".ast-index.db"
         os.environ["AST_DB_PATH"] = db_path
+        fmt = getattr(args, "format", None)
+        if fmt:
+            os.environ["AST_OUTPUT_FORMAT"] = fmt
         mcp.run()
 
     else:
