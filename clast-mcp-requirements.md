@@ -19,7 +19,7 @@ This cost compounds: in a typical coding session Claude may perform 20–30 cont
 
 ## Query Patterns
 
-The following are the core query types the server must support. They fall into two categories: **targeted lookups** (queries 1–4, 6) where Claude already knows the symbol name and needs its details, and **exploratory queries** (queries 5, 7) where Claude is discovering which symbols are relevant. Targeted lookups are individually cheap but frequent. Exploratory queries are where the bulk of token waste occurs — the grepai benchmark showed a single exploratory question spawning 5 subagents and 139 tool calls as Claude iterates through grep → read → grep → read cycles.
+The following are the core query types the server must support. They fall into two categories: **targeted lookups** (queries 1–4) where Claude already knows the symbol name and needs its details, and **exploratory queries** (queries 5, 6) where Claude is discovering which symbols are relevant. Targeted lookups are individually cheap but frequent. Exploratory queries are where the bulk of token waste occurs — the grepai benchmark showed a single exploratory question spawning 5 subagents and 139 tool calls as Claude iterates through grep → read → grep → read cycles.
 
 ### 1. Find a symbol definition
 
@@ -32,18 +32,24 @@ Claude needs to locate where a function, class, or variable is defined.
 **Data flow:**
 
 ```
-Q: get_symbol("AudioProcessor::processBlock")
+Q: ast_get_symbol("AudioProcessor::processBlock")
 ```
 ```json
 A: {
   "symbol": "MyPlugin::processBlock",
   "kind": "method",
-  "signature": "void processBlock(AudioBuffer<float>&, MidiBuffer&) override",
-  "parent": "class MyPlugin : public AudioProcessor",
+  "signature": "processBlock(AudioBuffer<float> &, MidiBuffer &)",
   "file": "src/PluginProcessor.cpp",
   "lines": [142, 198],
-  "body": "<just those 56 lines>",
-  "doc": "/// Main audio callback - runs on audio thread"
+  "doc": "/// Main audio callback - runs on audio thread",
+  "parent": "MyPlugin",
+  "return_type": "void",
+  "parameters": [
+    { "name": "buffer", "type": "juce::AudioBuffer<float> &" },
+    { "name": "midiMessages", "type": "juce::MidiBuffer &" }
+  ],
+  "attributes": ["override"],
+  "body": "<just those 56 lines>"
 }
 ```
 
@@ -58,21 +64,21 @@ Claude needs to understand a class interface or the structure of a file without 
 **Data flow:**
 
 ```
-Q: get_outline("MyPlugin")
+Q: ast_get_outline("MyPlugin")
 ```
 ```json
 A: {
   "name": "MyPlugin",
   "kind": "class",
-  "bases": ["juce::AudioProcessor", "juce::AudioProcessorValueTreeState::Listener"],
   "file": "src/PluginProcessor.h",
   "lines": [12, 87],
   "members": [
-    "void prepareToPlay(double, int) override",
-    "void processBlock(AudioBuffer<float>&, MidiBuffer&) override",
-    "void parameterChanged(const String&, float) override",
-    "AudioProcessorValueTreeState apvts"
+    { "kind": "method", "signature": "prepareToPlay(double, int)", "attributes": ["override"] },
+    { "kind": "method", "signature": "processBlock(AudioBuffer<float> &, MidiBuffer &)", "doc": "/// Main audio callback", "attributes": ["override"] },
+    { "kind": "method", "signature": "parameterChanged(const String &, float)", "attributes": ["override"] },
+    { "kind": "field", "signature": "AudioProcessorValueTreeState apvts" }
   ],
+  "bases": ["juce::AudioProcessor", "juce::AudioProcessorValueTreeState::Listener"],
   "doc": "/// Main processor for the XYZ plugin"
 }
 ```
@@ -88,23 +94,24 @@ Claude needs to know what calls or uses a given symbol.
 **Data flow:**
 
 ```
-Q: get_references("MyPlugin::parameterChanged")
+Q: ast_get_references("MyPlugin::parameterChanged")
 ```
 ```json
 A: {
   "symbol": "MyPlugin::parameterChanged",
+  "total_references": 2,
   "references": [
     {
       "caller": "MyPlugin::loadPreset",
       "file": "src/Presets.cpp",
       "line": 87,
-      "context": "parameterChanged(paramId, newValue);"
+      "context": "    parameterChanged(paramId, newValue);"
     },
     {
       "caller": "HostCallback::notify",
       "file": "src/HostSync.cpp",
       "line": 34,
-      "context": "processor.parameterChanged(id, val);"
+      "context": "    processor.parameterChanged(id, val);"
     }
   ]
 }
@@ -121,11 +128,12 @@ Claude needs to understand inheritance relationships to write correct overrides 
 **Data flow:**
 
 ```
-Q: get_hierarchy("MyPlugin")
+Q: ast_get_hierarchy("MyPlugin")
 ```
 ```json
 A: {
   "symbol": "MyPlugin",
+  "file": "src/PluginProcessor.h",
   "bases": [
     { "name": "juce::AudioProcessor", "file": "juce_AudioProcessor.h", "line": 44 },
     { "name": "juce::AudioProcessorValueTreeState::Listener", "file": "juce_AudioProcessorValueTreeState.h", "line": 210 }
@@ -142,12 +150,12 @@ Claude needs to find code related to a feature or concept when it doesn't know t
 
 **Today:** grep for keywords, read files, grep more, read more files — an expensive exploration spiral.
 
-**Required response:** A ranked list of matching chunks (scored by relevance), each with symbol name, signature, file path, and a short snippet. Search corpus includes symbol names, doc comments, and string literals.
+**Required response:** A ranked list of matching chunks (scored by BM25 relevance), each with symbol name, kind, signature, file path, and a short snippet. Search corpus includes symbol names, doc comments, parameter types, and parent scope names.
 
 **Data flow:**
 
 ```
-Q: search("parameter smoothing audio callback")
+Q: ast_search("parameter smoothing audio callback")
 ```
 ```json
 A: {
@@ -155,53 +163,27 @@ A: {
   "results": [
     {
       "symbol": "SmoothedParameter::process",
-      "signature": "float process(int numSamples)",
+      "kind": "method",
+      "signature": "process(int numSamples)",
       "file": "src/DSP/SmoothedParameter.cpp",
       "lines": [45, 72],
-      "snippet": "/// Applies exponential smoothing to parameter value over the given block size",
-      "score": 0.91
+      "score": 5.832,
+      "snippet": "/// Applies exponential smoothing to parameter value over the given block size"
     },
     {
       "symbol": "MyPlugin::processBlock",
-      "signature": "void processBlock(AudioBuffer<float>&, MidiBuffer&) override",
+      "kind": "method",
+      "signature": "processBlock(AudioBuffer<float> &, MidiBuffer &)",
       "file": "src/PluginProcessor.cpp",
       "lines": [142, 198],
-      "snippet": "/// Main audio callback - applies smoothed gain and filter cutoff",
-      "score": 0.74
+      "score": 3.417,
+      "snippet": "/// Main audio callback - applies smoothed gain and filter cutoff"
     }
   ]
 }
 ```
 
-### 6. Get a resolved function signature
-
-Claude needs to know what a function accepts and returns, with types fully resolved (no unresolved typedefs or aliases).
-
-**Today:** Read the header or source file.
-
-**Required response:** The fully resolved signature, including parameter names and types, return type, and any relevant attributes (override, const, noexcept).
-
-**Data flow:**
-
-```
-Q: get_signature("MyPlugin::processBlock")
-```
-```json
-A: {
-  "symbol": "MyPlugin::processBlock",
-  "resolved_signature": "void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages) override",
-  "return_type": "void",
-  "parameters": [
-    { "name": "buffer", "type": "juce::AudioBuffer<float>&" },
-    { "name": "midiMessages", "type": "juce::MidiBuffer&" }
-  ],
-  "attributes": ["override"],
-  "file": "src/PluginProcessor.h",
-  "line": 28
-}
-```
-
-### 7. Behavioural exploration
+### 6. Behavioural exploration
 
 Claude needs to find code related to a described behaviour or feature when it doesn't know any of the involved symbol names. These are the highest-cost queries — they describe what the code *does*, not what it's *called*, and typically require tracing across multiple classes and files.
 
@@ -223,12 +205,12 @@ Claude needs to find code related to a described behaviour or feature when it do
 - "Find where the sidechain input is routed to the compressor."
 - "How does the UI update when a parameter changes via host automation?"
 
-**Required response:** A ranked set of relevant symbols with enough context to answer the question without further file reads. Unlike query 5 (keyword search), these questions are natural language describing behaviour that may span multiple classes and a call chain.
+**Required response:** A ranked set of relevant symbols with enough context to answer the question without further file reads. Unlike query 5 (keyword search), these questions are natural language describing behaviour that may span multiple classes and a call chain. Both query types use the same `ast_search` tool — the BM25 engine handles natural language queries by tokenizing and matching against the full search corpus.
 
 **Data flow:**
 
 ```
-Q: search("how does the UI update when a parameter changes via host automation")
+Q: ast_search("how does the UI update when a parameter changes via host automation")
 ```
 ```json
 A: {
@@ -236,27 +218,30 @@ A: {
   "results": [
     {
       "symbol": "MyPlugin::parameterChanged",
-      "signature": "void parameterChanged(const String& parameterID, float newValue) override",
+      "kind": "method",
+      "signature": "parameterChanged(const String &, float)",
       "file": "src/PluginProcessor.cpp",
       "lines": [210, 225],
-      "snippet": "/// APVTS listener callback - forwards parameter changes to the editor",
-      "score": 0.93
+      "score": 6.214,
+      "snippet": "/// APVTS listener callback - forwards parameter changes to the editor"
     },
     {
       "symbol": "EditorComponent::updateFromProcessor",
-      "signature": "void updateFromProcessor()",
+      "kind": "method",
+      "signature": "updateFromProcessor()",
       "file": "src/EditorComponent.cpp",
       "lines": [88, 134],
-      "snippet": "/// Reads current parameter values and updates all slider/button positions",
-      "score": 0.87
+      "score": 4.871,
+      "snippet": "/// Reads current parameter values and updates all slider/button positions"
     },
     {
       "symbol": "ParameterAttachment::setValue",
-      "signature": "void setValue(float newValue, juce::NotificationType notification)",
+      "kind": "method",
+      "signature": "setValue(float, juce::NotificationType)",
       "file": "src/ParameterAttachment.cpp",
       "lines": [45, 62],
-      "snippet": "/// Propagates value change to the attached Component on the message thread",
-      "score": 0.79
+      "score": 3.592,
+      "snippet": "/// Propagates value change to the attached Component on the message thread"
     }
   ]
 }
