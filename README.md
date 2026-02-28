@@ -123,22 +123,21 @@ watch tool calls, response sizes, and timing in real time.
 
 ## Output format
 
-By default, tool responses are JSON. A **compact** plain-text format is also
-available that uses native C++ syntax instead of JSON field names, saving
-~3,000-5,000 tokens per session. See
-[docs/compact-response-format.md](docs/compact-response-format.md) for the full
-specification and rationale.
+By default, tool responses use a **compact** plain-text format that renders
+native C++ syntax instead of JSON field names, saving ~3,000-5,000 tokens per
+session. See [docs/compact-response-format.md](docs/compact-response-format.md)
+for the full specification and rationale.
 
-Enable it via CLI flag:
+To switch to JSON output, use the CLI flag:
 
 ```bash
-python3 -m clang_ast_mcp serve --db .ast-index.db --format compact
+python3 -m clang_ast_mcp serve --db .ast-index.db --format json
 ```
 
-Or via environment variable:
+Or the environment variable:
 
 ```bash
-AST_OUTPUT_FORMAT=compact python3 -m clang_ast_mcp serve --db .ast-index.db
+AST_OUTPUT_FORMAT=json python3 -m clang_ast_mcp serve --db .ast-index.db
 ```
 
 In `.mcp.json`:
@@ -150,7 +149,7 @@ In `.mcp.json`:
       "command": "bash",
       "args": ["-c", "./clast/.venv/bin/python3 -m clang_ast_mcp serve --db ./clast/.ast-index.db 2>>./clast/mcp.log"],
       "env": {
-        "AST_OUTPUT_FORMAT": "compact",
+        "AST_OUTPUT_FORMAT": "json",
         "LIBCLANG_PATH": "/opt/homebrew/opt/llvm/lib/libclang.dylib"
       }
     }

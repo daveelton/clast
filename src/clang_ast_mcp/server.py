@@ -78,7 +78,7 @@ _db_inode: int = 0
 _db_mtime: float = 0.0
 _last_check: float = 0.0
 _CHECK_INTERVAL = 5.0  # seconds between freshness checks
-_output_format: str = "json"  # "json" or "compact" — set via AST_OUTPUT_FORMAT env var
+_output_format: str = "compact"  # "compact" or "json" — set via AST_OUTPUT_FORMAT env var
 
 
 def _get_db_stat() -> tuple[int, float]:
@@ -128,7 +128,7 @@ async def app_lifespan(server: FastMCP):
     """Initialize database and search index on startup."""
     global _db, _search, _db_path, _db_inode, _db_mtime, _output_format
 
-    _output_format = os.environ.get("AST_OUTPUT_FORMAT", "json").lower()
+    _output_format = os.environ.get("AST_OUTPUT_FORMAT", "compact").lower()
     if _output_format not in ("json", "compact"):
         log.warning("Unknown AST_OUTPUT_FORMAT=%r, defaulting to json", _output_format)
         _output_format = "json"
