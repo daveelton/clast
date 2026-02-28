@@ -145,7 +145,7 @@ def format_search(query: str, results: list) -> str:
     if not results:
         return f'No matches for "{query}".'
 
-    lines = []
+    blocks = []
     for r in results:
         sym = r.symbol
         size = ""
@@ -155,13 +155,12 @@ def format_search(query: str, results: list) -> str:
         # Compact declaration without param names (shorter for listings)
         decl = build_declaration(sym, include_param_names=False)
 
-        lines.append(f"{sym.file}:{sym.line_start}  {sym.qualified_name}{size}")
-        doc_part = ""
+        entry = [f"{sym.file}:{sym.line_start}  {sym.qualified_name}{size}"]
+        entry.append(f"  {decl}")
         if sym.doc:
-            snippet = sym.doc[:200]
-            doc_part = f"\n  {snippet}"
-        lines.append(f"  {decl}{doc_part}")
-    return "\n\n".join(lines)
+            entry.append(f"  {sym.doc[:200]}")
+        blocks.append("\n".join(entry))
+    return "\n\n".join(blocks)
 
 
 def format_outline_class(cls: Symbol, members: list[Symbol]) -> str:
@@ -194,8 +193,10 @@ def format_outline_file(name: str, symbols: list[Symbol]) -> str:
             size = f"  ({s.line_end - s.line_start + 1} lines)"
 
         if s.doc:
-            lines.append(f"{s.line_start:<4}  {s.doc}")
-        lines.append(f"{'':4}  {decl}{size}")
+            lines.append(f"{s.line_start:<4}{s.doc}")
+            lines.append(f"{'':4}{decl}{size}")
+        else:
+            lines.append(f"{s.line_start:<4}{decl}{size}")
     return "\n".join(lines)
 
 

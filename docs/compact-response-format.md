@@ -103,7 +103,7 @@ void MyPlugin::processBlock(AudioBuffer<float> & buffer, MidiBuffer & midiMessag
 ### ast_get_symbol — single match, without body
 
 ```
-src/PluginProcessor.cpp:142  (56 lines)
+src/PluginProcessor.cpp:142  (57 lines)
 /// Main audio callback - runs on audio thread
 void MyPlugin::processBlock(AudioBuffer<float> & buffer, MidiBuffer & midiMessages) override;
 ```
@@ -140,7 +140,7 @@ No body in the listing — each match uses the same format as "without body".
 ```
 3 matches:
 
-src/PluginProcessor.cpp:142  (56 lines)
+src/PluginProcessor.cpp:142  (57 lines)
 void MyPlugin::processBlock(AudioBuffer<float> & buffer, MidiBuffer & midiMessages) override
 
 src/SidechainVariant.cpp:55  (34 lines)
@@ -249,7 +249,7 @@ src/DSP/SmoothedParameter.cpp:45  SmoothedParameter::process  (27 lines)
   float process(int numSamples)
   /// Applies exponential smoothing to parameter value over the given block size
 
-src/PluginProcessor.cpp:142  MyPlugin::processBlock  (56 lines)
+src/PluginProcessor.cpp:142  MyPlugin::processBlock  (57 lines)
   void processBlock(AudioBuffer<float> &, MidiBuffer &) override
   /// Main audio callback - applies smoothed gain and filter cutoff
 ```

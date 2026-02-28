@@ -222,6 +222,15 @@ class TestFormatSearch:
         assert "MyPlugin::processBlock" in result
         assert "/// Main audio callback" in result
 
+    def test_no_blank_line_within_result(self):
+        """Location, declaration, and doc should be contiguous (no blank line)."""
+        sym = _sym()
+        results = [FakeSearchResult(symbol=sym, score=10.0)]
+        result = format_search("process", results)
+        lines = result.split("\n")
+        # Single result should have no blank lines
+        assert "" not in lines
+
 
 # ── format_outline_class ─────────────────────────────────────────────
 
@@ -274,6 +283,12 @@ class TestFormatOutlineFile:
         assert result.startswith("src/PluginProcessor.h")
         assert "/// Main processor" in result
         assert "(75 lines)" in result
+        # Line number on doc line for symbol with doc
+        assert "12  /// Main processor" in result
+        # Declaration indented below doc (no line number)
+        assert "    class MyPlugin" in result
+        # Line number on declaration line for symbol without doc
+        assert "90  void helperFunction(int n)" in result
 
 
 # ── format_references ────────────────────────────────────────────────

@@ -608,10 +608,10 @@ class Indexer:
         }
 
     def index_directory(
-        self, directory: str, extensions: tuple[str, ...] = (".cpp", ".cc", ".cxx", ".c", ".h", ".hpp", ".hxx"),
+        self, directory: str, extensions: tuple[str, ...] = (".cpp", ".cc", ".cxx", ".c", ".m", ".mm", ".h", ".hpp", ".hxx"),
         force: bool = False,
     ) -> dict:
-        """Index all C++ files in a directory recursively.
+        """Index all C/C++/ObjC files in a directory recursively.
 
         Returns aggregate stats.
         """

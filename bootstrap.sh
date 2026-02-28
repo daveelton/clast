@@ -11,7 +11,7 @@ CLAUDE_MD="$PROJECT_DIR/CLAUDE.md"
 ADDITION="$SCRIPT_DIR/CLAUDE-CLAST-ADDITION.md"
 
 # Current version — bump this when CLAUDE-CLAST-ADDITION.md changes
-CLAST_VERSION="v2"
+CLAST_VERSION="v3"
 
 # ── Create venv and install dependencies ────────────────────────────
 if [ ! -d "$VENV_DIR" ]; then
