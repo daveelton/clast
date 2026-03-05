@@ -4,11 +4,16 @@
 # your main target has built. This ensures generated headers (e.g. JUCE's
 # JuceHeader.h) exist before indexing.
 #
+# By default the target is part of ALL, so the index is updated on every
+# build. The indexer is incremental (content-hash based), so no-change
+# builds add negligible overhead.
+#
 # Usage:
 #   include(clast/cmake/ClastIndex.cmake)
 #   add_clast_index(YourMainTarget)
 #
-# Then:
+# To exclude from ALL and run manually instead:
+#   add_clast_index(YourMainTarget EXCLUDE_FROM_ALL)
 #   cmake --build cmake-build-debug --target ast-index
 
 function(add_clast_index DEPENDS_TARGET)
@@ -21,7 +26,12 @@ function(add_clast_index DEPENDS_TARGET)
         return()
     endif()
 
-    add_custom_target(ast-index
+    set(_CLAST_ALL ALL)
+    if("EXCLUDE_FROM_ALL" IN_LIST ARGN)
+        set(_CLAST_ALL "")
+    endif()
+
+    add_custom_target(ast-index ${_CLAST_ALL}
         COMMAND "${CLAST_MCP}" index "${CMAKE_SOURCE_DIR}"
             --compile-commands "${CMAKE_BINARY_DIR}"
             --db "${CLAST_DB}"

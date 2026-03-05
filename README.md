@@ -73,15 +73,9 @@ include(clast/cmake/ClastIndex.cmake)
 add_clast_index(YourMainTarget)
 ```
 
-Then build the index explicitly:
-
-```bash
-cmake --build cmake-build-debug --target ast-index
-```
-
-The `ast-index` target depends on your main target, so it will build your
-project first if needed. It is not part of the default `all` target — it
-only runs when you ask for it.
+The `ast-index` target is part of the default `ALL` build, so the index is
+updated automatically every time you build. The indexer is incremental
+(content-hash based), so no-change builds add negligible overhead.
 
 ### 3. Configure Claude Code
 
@@ -202,7 +196,28 @@ clang-ast-mcp index /path/to/JUCE/modules \
 This gives Claude access to JUCE class outlines and API signatures without
 indexing implementation files.
 
-## Xcode projects
+## Advanced topics
+
+### Manual CMake index target
+
+If you prefer to run the indexer on demand rather than on every build, pass
+`EXCLUDE_FROM_ALL`:
+
+```cmake
+include(clast/cmake/ClastIndex.cmake)
+add_clast_index(YourMainTarget EXCLUDE_FROM_ALL)
+```
+
+Then build the index explicitly:
+
+```bash
+cmake --build cmake-build-debug --target ast-index
+```
+
+The `ast-index` target depends on your main target, so it will build your
+project first if needed.
+
+### Xcode projects
 
 Xcode doesn't produce `compile_commands.json` natively. You may be able to use
 [Bear](https://github.com/rizsotto/Bear) to generate one by intercepting
