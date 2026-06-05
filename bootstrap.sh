@@ -1,5 +1,15 @@
 #!/usr/bin/env bash
-# Bootstrap a self-contained venv for clast inside the clast directory.
+# Bootstrap clast for a consumer project — opt-in and non-invasive by default.
+#
+# Everything it wires up is personal and NOT committed to the parent project:
+#   - venv                 -> clast/.venv          (self-contained Python env)
+#   - clast instructions   -> CLAUDE.local.md      (personal, gitignored)
+#   - clang-ast MCP server -> Claude Code "local" scope (per-project user settings)
+#   - clast/, CLAUDE.local.md added to the parent project's .gitignore
+#
+# This means a teammate who never runs bootstrap.sh sees zero clast footprint:
+# no MCP server to fail, no instructions referencing tools they don't have.
+#
 # Usage: ./clast/bootstrap.sh        (from the parent project)
 #    or: ./bootstrap.sh              (from the clast directory)
 set -euo pipefail
@@ -7,11 +17,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/.venv"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CLAUDE_LOCAL_MD="$PROJECT_DIR/CLAUDE.local.md"
 CLAUDE_MD="$PROJECT_DIR/CLAUDE.md"
 ADDITION="$SCRIPT_DIR/CLAUDE-CLAST-ADDITION.md"
+GITIGNORE="$PROJECT_DIR/.gitignore"
+DB_PATH="$SCRIPT_DIR/.ast-index.db"
+LOG_PATH="$SCRIPT_DIR/mcp.log"
 
 # Current version — bump this when CLAUDE-CLAST-ADDITION.md changes
-CLAST_VERSION="v3"
+CLAST_VERSION="v4"
 
 # ── Create venv and install dependencies ────────────────────────────
 if [ ! -d "$VENV_DIR" ]; then
@@ -26,63 +40,104 @@ echo "Installing clast dependencies ..."
 echo ""
 echo "Done. venv python: $VENV_DIR/bin/python3"
 
-# ── Update CLAUDE.md ──────────────────────────────────────────────
-
-update_claude_md() {
-    if [ ! -f "$CLAUDE_MD" ]; then
-        echo ""
-        echo "No CLAUDE.md found at $PROJECT_DIR"
-        echo "To help Claude Code use the AST index, add the contents of"
-        echo "  $ADDITION"
-        echo "to your project's CLAUDE.md."
-        return
-    fi
-
-    echo ""
-
-    # Check if current version is already present
-    if grep -q "clast-instructions $CLAST_VERSION" "$CLAUDE_MD" 2>/dev/null; then
-        echo "CLAUDE.md already has clast instructions ($CLAST_VERSION) — up to date."
-        return
-    fi
-
-    # Check if an older version exists
-    if grep -q "clast-instructions" "$CLAUDE_MD" 2>/dev/null; then
-        old_ver=$(grep -o 'clast-instructions v[0-9]*' "$CLAUDE_MD" | head -1 | grep -o 'v[0-9]*')
-        echo "CLAUDE.md has outdated clast instructions (${old_ver:-unknown} → $CLAST_VERSION)."
-        read -rp "Replace with updated version? [Y/n] " answer
-        if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
-            # Remove old block (everything between the markers, inclusive)
-            sed -i.clast-bak '/<!-- clast-instructions/,/<!-- \/clast-instructions -->/d' "$CLAUDE_MD"
-            cat "$ADDITION" >> "$CLAUDE_MD"
-            rm -f "$CLAUDE_MD.clast-bak"
-            echo "Updated clast instructions in CLAUDE.md."
-        else
-            echo "Skipped. You can update manually — see:"
-            echo "  $ADDITION"
+# ── Ensure clast artefacts are gitignored in the parent project ─────
+update_gitignore() {
+    for entry in "clast/" "CLAUDE.local.md"; do
+        if [ -f "$GITIGNORE" ] && grep -qxF "$entry" "$GITIGNORE" 2>/dev/null; then
+            continue
         fi
+        echo "$entry" >> "$GITIGNORE"
+        echo "Added '$entry' to $GITIGNORE"
+    done
+}
+
+# ── Write clast instructions to CLAUDE.local.md (personal, gitignored) ──
+update_claude_md() {
+    if [ ! -f "$CLAUDE_LOCAL_MD" ]; then
+        cat "$ADDITION" > "$CLAUDE_LOCAL_MD"
+        echo "Created $CLAUDE_LOCAL_MD with clast instructions."
         return
     fi
 
-    # Check for pre-marker clast content (from before versioning was added)
-    if grep -q "ast_search" "$CLAUDE_MD" 2>/dev/null; then
-        echo "CLAUDE.md has clast instructions but without version markers."
-        echo "Please replace the clast section manually with the contents of:"
-        echo "  $ADDITION"
+    if grep -q "clast-instructions $CLAST_VERSION" "$CLAUDE_LOCAL_MD" 2>/dev/null; then
+        echo "CLAUDE.local.md already has clast instructions ($CLAST_VERSION) — up to date."
         return
     fi
 
-    # No clast content at all — offer to append
-    echo "Found $CLAUDE_MD"
-    read -rp "Append clast instructions to CLAUDE.md? [Y/n] " answer
-    if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
-        echo "" >> "$CLAUDE_MD"
-        cat "$ADDITION" >> "$CLAUDE_MD"
-        echo "Added clast instructions to CLAUDE.md."
-    else
-        echo "Skipped. You can add them manually — see:"
-        echo "  $ADDITION"
+    # Older marker present → replace the block in place.
+    if grep -q "clast-instructions" "$CLAUDE_LOCAL_MD" 2>/dev/null; then
+        old_ver=$(grep -o 'clast-instructions v[0-9]*' "$CLAUDE_LOCAL_MD" | head -1 | grep -o 'v[0-9]*')
+        sed -i.clast-bak '/<!-- clast-instructions/,/<!-- \/clast-instructions -->/d' "$CLAUDE_LOCAL_MD"
+        cat "$ADDITION" >> "$CLAUDE_LOCAL_MD"
+        rm -f "$CLAUDE_LOCAL_MD.clast-bak"
+        echo "Updated clast instructions in CLAUDE.local.md (${old_ver:-unknown} → $CLAST_VERSION)."
+        return
+    fi
+
+    # No markers → append.
+    printf '\n' >> "$CLAUDE_LOCAL_MD"
+    cat "$ADDITION" >> "$CLAUDE_LOCAL_MD"
+    echo "Appended clast instructions to CLAUDE.local.md."
+}
+
+# ── Register the clang-ast MCP server in Claude Code "local" scope ──
+detect_libclang() {
+    local libdir cand prefix
+    if command -v llvm-config >/dev/null 2>&1; then
+        libdir="$(llvm-config --libdir 2>/dev/null || true)"
+        for cand in "$libdir/libclang.dylib" "$libdir/libclang.so"; do
+            [ -f "$cand" ] && { echo "$cand"; return; }
+        done
+    fi
+    if command -v brew >/dev/null 2>&1; then
+        prefix="$(brew --prefix llvm 2>/dev/null || true)"
+        for cand in "$prefix/lib/libclang.dylib" "$prefix/lib/libclang.so"; do
+            [ -f "$cand" ] && { echo "$cand"; return; }
+        done
+    fi
+    echo ""
+}
+
+register_mcp() {
+    local libclang serve
+    libclang="$(detect_libclang)"
+    serve="$VENV_DIR/bin/python3 -m clang_ast_mcp serve --db $DB_PATH 2>>$LOG_PATH"
+
+    if ! command -v claude >/dev/null 2>&1; then
+        echo ""
+        echo "The 'claude' CLI was not found on PATH — MCP server not registered."
+        echo "Register it yourself (local scope, not committed) with:"
+        echo "  claude mcp add --scope local clang-ast -e LIBCLANG_PATH=${libclang:-/path/to/libclang.(dylib|so)} -- bash -c \"$serve\""
+        return
+    fi
+
+    if [ -z "$libclang" ]; then
+        echo ""
+        echo "Could not auto-detect libclang — MCP server not registered."
+        echo "Install it (brew install llvm / apt install libclang-dev), then run:"
+        echo "  claude mcp add --scope local clang-ast -e LIBCLANG_PATH=/path/to/libclang.(dylib|so) -- bash -c \"$serve\""
+        return
+    fi
+
+    # Re-runnable: drop any existing local-scope entry first.
+    claude mcp remove --scope local clang-ast >/dev/null 2>&1 || true
+    claude mcp add --scope local clang-ast -e "LIBCLANG_PATH=$libclang" -- bash -c "$serve"
+    echo "Registered clang-ast MCP server (local scope), LIBCLANG_PATH=$libclang"
+}
+
+# ── Warn if a legacy committed block lingers in CLAUDE.md ───────────
+warn_legacy_claude_md() {
+    if [ -f "$CLAUDE_MD" ] && grep -q "clast-instructions" "$CLAUDE_MD" 2>/dev/null; then
+        echo ""
+        echo "NOTE: $CLAUDE_MD still contains a clast-instructions block from an older clast version."
+        echo "      clast now writes to CLAUDE.local.md (personal, gitignored). Remove the"
+        echo "      <!-- clast-instructions ... --> block from CLAUDE.md to avoid duplication"
+        echo "      and to keep clast out of the shared repo."
     fi
 }
 
+echo ""
+update_gitignore
 update_claude_md
+register_mcp
+warn_legacy_claude_md

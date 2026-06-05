@@ -24,14 +24,27 @@ instead of making Claude read entire files.
 
 ### 0. Clone into your C++ project
 
-From your project root, clone the repo and add it to `.gitignore` so neither
-the tool nor its index database get committed to your project:
+From your project root, clone the repo and run `bootstrap.sh`:
 
 ```bash
 git clone git@github.com:daveelton/clast.git
-echo "clast/" >> .gitignore
 ./clast/bootstrap.sh
 ```
+
+clast is **opt-in and non-invasive** — `bootstrap.sh` only touches files that are
+personal to you and never committed to the parent project. It:
+
+- creates a self-contained venv at `clast/.venv`,
+- writes the clast instructions to **`CLAUDE.local.md`** (personal, gitignored —
+  not the shared `CLAUDE.md`),
+- registers the `clang-ast` MCP server in Claude Code's **local scope**
+  (per-project user settings, with `LIBCLANG_PATH` auto-detected), and
+- adds `clast/` and `CLAUDE.local.md` to the parent project's `.gitignore`.
+
+A teammate who never runs `bootstrap.sh` therefore sees zero clast footprint: no
+MCP server entry to fail, no committed instructions referencing tools they don't
+have. Re-running `bootstrap.sh` is safe and idempotent (it also upgrades the
+`CLAUDE.local.md` instructions block when the version changes).
 
 ### 1. Generate compile_commands.json (if using CMake)
 
@@ -77,31 +90,51 @@ The `ast-index` target is part of the default `ALL` build, so the index is
 updated automatically every time you build. The indexer is incremental
 (content-hash based), so no-change builds add negligible overhead.
 
-### 3. Configure Claude Code
+**Important for opt-in / gitignored checkouts:** because `clast/` is not committed
+to the parent project, teammates who haven't cloned it won't have
+`clast/cmake/ClastIndex.cmake`, and a bare `include()` would fail their CMake
+configure. Guard it so the build degrades gracefully:
 
-Add to your project's `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "clang-ast": {
-      "command": "bash",
-      "args": ["-c", "./clast/.venv/bin/python3 -m clang_ast_mcp serve --db ./clast/.ast-index.db 2>>./clast/mcp.log"],
-      "env": {
-        "LIBCLANG_PATH": "/opt/homebrew/opt/llvm/lib/libclang.dylib"
-      }
-    }
-  }
-}
+```cmake
+# Place this AFTER your main target is defined — add_clast_index depends on it.
+# The indexer needs compile_commands.json, so ensure CMAKE_EXPORT_COMPILE_COMMANDS
+# is ON. Set it *early* (before any targets are created) or configure with
+# -DCMAKE_EXPORT_COMPILE_COMMANDS=ON — setting it next to the include below is too
+# late, as CMake fixes the per-target export property at target-creation time.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/clast/cmake/ClastIndex.cmake")
+    include(clast/cmake/ClastIndex.cmake)
+    add_clast_index(YourMainTarget)
+endif()
 ```
 
-Logs are appended to `./clast/mcp.log` — use `tail -f ./clast/mcp.log` to
-watch tool calls, response sizes, and timing in real time.
+With clast absent the block is a no-op and the build is unaffected; with clast
+present the index refreshes on every build. (`add_clast_index` is itself
+defensive — if the venv is missing it skips creating the target rather than
+erroring.)
 
-`bootstrap.sh` will offer to append clast instructions to your project's
-`CLAUDE.md`. If you prefer to do it manually, copy the contents of
-[CLAUDE-CLAST-ADDITION.md](CLAUDE-CLAST-ADDITION.md) into your project's
-`CLAUDE.md`.
+### 3. Configure Claude Code
+
+`bootstrap.sh` already did this — it registered the `clang-ast` MCP server in
+Claude Code's **local scope** (not a committed `.mcp.json`) and wrote the clast
+instructions to `CLAUDE.local.md`. Nothing further is needed; restart Claude Code
+to pick up the new MCP server.
+
+If `bootstrap.sh` couldn't find the `claude` CLI or auto-detect libclang, it
+prints the exact command to run. Manually, that is:
+
+```bash
+claude mcp add --scope local clang-ast \
+  -e LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib/libclang.dylib \
+  -- bash -c "$PWD/clast/.venv/bin/python3 -m clang_ast_mcp serve --db $PWD/clast/.ast-index.db 2>>$PWD/clast/mcp.log"
+```
+
+Logs are appended to `clast/mcp.log` — use `tail -f clast/mcp.log` to watch tool
+calls, response sizes, and timing in real time.
+
+> Prefer a committed, team-shared setup instead of opt-in? Add the server to a
+> project-scoped `.mcp.json` and copy [CLAUDE-CLAST-ADDITION.md](CLAUDE-CLAST-ADDITION.md)
+> into the shared `CLAUDE.md`. Note this commits a clang-ast entry that fails for
+> any teammate who hasn't run `bootstrap.sh`, and hardcodes `LIBCLANG_PATH`.
 
 ## MCP Tools
 

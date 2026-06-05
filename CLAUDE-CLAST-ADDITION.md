@@ -1,4 +1,4 @@
-<!-- clast-instructions v3 -->
+<!-- clast-instructions v4 -->
 ## C/C++/ObjC code exploration
 
 This project has a semantic AST index (clast) for C-family source files
@@ -13,4 +13,8 @@ Read/Grep when exploring indexed code:
 
 Fall back to Read/Grep/Glob for non-C-family files, config files, or when
 editing (read first, then edit). Check coverage with `ast_status`.
+
+clast is an opt-in tool typically checked out into `clast/` (gitignored, not part of this
+repo). Source and setup: https://github.com/daveelton/clast — if the `ast_*`
+tools are unavailable, it isn't set up: clone it and run `./clast/bootstrap.sh`.
 <!-- /clast-instructions -->
