@@ -21,8 +21,17 @@ CLAUDE_LOCAL_MD="$PROJECT_DIR/CLAUDE.local.md"
 CLAUDE_MD="$PROJECT_DIR/CLAUDE.md"
 ADDITION="$SCRIPT_DIR/CLAUDE-CLAST-ADDITION.md"
 GITIGNORE="$PROJECT_DIR/.gitignore"
-DB_PATH="$SCRIPT_DIR/.ast-index.db"
-LOG_PATH="$SCRIPT_DIR/mcp.log"
+# Path to clast relative to the project root (usually "clast"). The MCP serve
+# command registered below MUST use this RELATIVE form, not absolute paths:
+# Claude Code canonicalises every git worktree of a repo onto a single
+# local-scope config key, so one clang-ast entry is shared by all worktrees.
+# A relative path is resolved against each session's own working directory at
+# launch, so that single shared entry gives each worktree its own
+# clast/.venv + .ast-index.db. An absolute path would instead pin every
+# worktree to whichever one last ran bootstrap. (The venv/pip steps further
+# down still use the absolute $SCRIPT_DIR/$VENV_DIR — only the launched serve
+# command needs to be relative.)
+CLAST_REL="${SCRIPT_DIR#"$PROJECT_DIR"/}"
 
 # Current version — bump this when CLAUDE-CLAST-ADDITION.md changes
 CLAST_VERSION="v4"
@@ -101,7 +110,7 @@ detect_libclang() {
 register_mcp() {
     local libclang serve
     libclang="$(detect_libclang)"
-    serve="$VENV_DIR/bin/python3 -m clang_ast_mcp serve --db $DB_PATH 2>>$LOG_PATH"
+    serve="./$CLAST_REL/.venv/bin/python3 -m clang_ast_mcp serve --db ./$CLAST_REL/.ast-index.db 2>>./$CLAST_REL/mcp.log"
 
     if ! command -v claude >/dev/null 2>&1; then
         echo ""
