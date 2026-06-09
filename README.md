@@ -125,8 +125,12 @@ prints the exact command to run. Manually, that is:
 ```bash
 claude mcp add --scope local clang-ast \
   -e LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib/libclang.dylib \
-  -- bash -c "$PWD/clast/.venv/bin/python3 -m clang_ast_mcp serve --db $PWD/clast/.ast-index.db 2>>$PWD/clast/mcp.log"
+  -- bash -c "./clast/.venv/bin/python3 -m clang_ast_mcp serve --db ./clast/.ast-index.db 2>>./clast/mcp.log"
 ```
+
+Use **relative** paths in the serve command (resolved at launch against the
+session's working directory), not absolute ones — see [Git worktrees](#git-worktrees)
+for why. Run this from the project root so `./clast/...` resolves correctly.
 
 Logs are appended to `clast/mcp.log` — use `tail -f clast/mcp.log` to watch tool
 calls, response sizes, and timing in real time.
@@ -249,6 +253,39 @@ cmake --build cmake-build-debug --target ast-index
 
 The `ast-index` target depends on your main target, so it will build your
 project first if needed.
+
+### Git worktrees
+
+If you use multiple git worktrees of the same repo (e.g. a `develop` checkout
+and a maintenance-branch worktree), they share one underlying repository. The
+`clang-ast` local-scope registration may end up shared across them — observed
+behaviour is that the `claude` CLI writes under the worktree's own path key, but
+Claude Code can canonicalise worktrees onto a single key when it reads config.
+Either way, `bootstrap.sh` handles this by registering the serve command with
+**relative** paths:
+
+```
+bash -c "./clast/.venv/bin/python3 -m clang_ast_mcp serve --db ./clast/.ast-index.db 2>>./clast/mcp.log"
+```
+
+Relative paths are resolved at launch against each session's working directory,
+so the *same* entry gives each worktree its own `clast/.venv` and
+`.ast-index.db`. An **absolute** `--db` path would instead pin every worktree to
+whichever one last ran `bootstrap.sh` — so a session in another worktree would
+silently load the wrong index. This is why the registered command (and the
+manual fallback above) must stay relative. Each worktree still needs its own
+`bootstrap.sh` run to create its `clast/.venv` and index.
+
+Two caveats to this approach:
+
+- **Launch directory matters.** Relative resolution assumes Claude Code launches
+  the MCP server with its working directory at the worktree root. Starting a
+  session from a *subdirectory* would make `./clast/...` resolve against that
+  subdir and fail. If you need to tolerate that, register a self-rooting command
+  instead: `bash -c 'cd "$(git rev-parse --show-toplevel)" && exec ./clast/.venv/bin/python3 -m clang_ast_mcp serve --db ./clast/.ast-index.db 2>>./clast/mcp.log'`.
+- **It depends on Claude Code internals** (the per-session launch cwd, and how
+  worktrees are keyed) that aren't a documented contract. Re-confirm after major
+  Claude Code upgrades — a regression here is quiet (wrong index, not an error).
 
 ### Xcode projects
 
