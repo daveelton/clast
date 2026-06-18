@@ -195,8 +195,18 @@ offer_index() {
         echo "Build, Execution, Deployment > CMake), configure/build, then:  ./$CLAST_REL/index.sh"
     fi
     echo ""
-    echo "From now on: re-run ./$CLAST_REL/index.sh after adding files or notable changes to keep"
-    echo "the index current (it's incremental; pass --force to rebuild from scratch)."
+    # If the project wires clast's CMake target (add_clast_index in CMakeLists.txt),
+    # a normal build refreshes the index — point at that rather than only index.sh.
+    if grep -q 'add_clast_index' "$PROJECT_DIR/CMakeLists.txt" 2>/dev/null; then
+        echo "This project wires clast's CMake 'ast-index' target, so a normal build keeps the"
+        echo "index current automatically (incremental — negligible on no-change builds). Refresh"
+        echo "on demand with:  cmake --build <build-dir> --target ast-index   (or ./$CLAST_REL/index.sh)."
+    else
+        echo "From now on, keep the index current with ./$CLAST_REL/index.sh after notable changes"
+        echo "(incremental; --force rebuilds from scratch). To refresh it as part of your build"
+        echo "instead, wire clast's CMake target: include(clast/cmake/ClastIndex.cmake) +"
+        echo "add_clast_index(<your-target>) in CMakeLists.txt."
+    fi
 }
 
 echo ""
