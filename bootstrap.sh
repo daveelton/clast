@@ -134,19 +134,74 @@ register_mcp() {
     echo "Registered clang-ast MCP server (local scope), LIBCLANG_PATH=$libclang"
 }
 
-# ── Warn if a legacy committed block lingers in CLAUDE.md ───────────
-warn_legacy_claude_md() {
-    if [ -f "$CLAUDE_MD" ] && grep -q "clast-instructions" "$CLAUDE_MD" 2>/dev/null; then
-        echo ""
-        echo "NOTE: $CLAUDE_MD still contains a clast-instructions block from an older clast version."
-        echo "      clast now writes to CLAUDE.local.md (personal, gitignored). Remove the"
-        echo "      <!-- clast-instructions ... --> block from CLAUDE.md to avoid duplication"
-        echo "      and to keep clast out of the shared repo."
+# ── Yes/no prompt, defaulting to yes; "no" when non-interactive ─────
+confirm() {
+    local reply
+    # No TTY (CI, piped) → caller's safe fallback, never silently edit/build.
+    [ -t 0 ] || return 1
+    read -r -p "$1 [Y/n] " reply
+    case "$reply" in
+        [nN] | [nN][oO]) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+# ── Remove a legacy clast block from the committed CLAUDE.md ─────────
+# v4 keeps instructions in CLAUDE.local.md (gitignored); any clast block in
+# the tracked CLAUDE.md is from an older version (v3 or earlier) and would
+# impose clast on teammates if committed.
+remove_legacy_claude_md() {
+    [ -f "$CLAUDE_MD" ] && grep -q "clast-instructions" "$CLAUDE_MD" 2>/dev/null || return 0
+
+    local old_ver
+    old_ver=$(grep -o 'clast-instructions v[0-9]*' "$CLAUDE_MD" | head -1 | grep -o 'v[0-9]*')
+    echo ""
+    echo "Found a legacy clast block (${old_ver:-pre-v4}) in the committed $CLAUDE_MD."
+    echo "v4 keeps its instructions in CLAUDE.local.md (gitignored), so this block is stale."
+
+    if confirm "Remove the stale clast block from CLAUDE.md?"; then
+        # Delete the marked block. A blank line where it sat may remain — harmless,
+        # and the user is pointed at the diff to review anyway.
+        sed -i.clast-bak \
+            -e '/<!-- clast-instructions/,/<!-- \/clast-instructions -->/d' \
+            "$CLAUDE_MD"
+        rm -f "$CLAUDE_MD.clast-bak"
+        echo "Removed. Review and commit it:  git diff -- $CLAUDE_MD"
+    else
+        echo "Left as-is. Remove the <!-- clast-instructions ... --> block from CLAUDE.md manually."
     fi
+}
+
+# ── Offer to build the AST index, and explain the ongoing workflow ──
+offer_index() {
+    local cc_dir="" dir
+    for dir in "$PROJECT_DIR/cmake-build-debug" "$PROJECT_DIR/cmake-build-release" \
+               "$PROJECT_DIR/cmake-build-relwithdebinfo" "$PROJECT_DIR/build"; do
+        if [ -f "$dir/compile_commands.json" ]; then cc_dir="$dir"; break; fi
+    done
+
+    echo ""
+    if [ -n "$cc_dir" ]; then
+        echo "Found a configured build: $cc_dir/compile_commands.json"
+        if confirm "Build the clast index now? (first run can take several minutes)"; then
+            "$SCRIPT_DIR/index.sh" "$cc_dir" \
+                || echo "Indexing failed — run ./$CLAST_REL/index.sh yourself once resolved."
+        else
+            echo "Skipped. Build it later with:  ./$CLAST_REL/index.sh"
+        fi
+    else
+        echo "No compile_commands.json found yet — the index needs a configured build first."
+        echo "Add -DCMAKE_EXPORT_COMPILE_COMMANDS=ON to your CMake options (in CLion: Settings >"
+        echo "Build, Execution, Deployment > CMake), configure/build, then:  ./$CLAST_REL/index.sh"
+    fi
+    echo ""
+    echo "From now on: re-run ./$CLAST_REL/index.sh after adding files or notable changes to keep"
+    echo "the index current (it's incremental; pass --force to rebuild from scratch)."
 }
 
 echo ""
 update_gitignore
 update_claude_md
 register_mcp
-warn_legacy_claude_md
+remove_legacy_claude_md
+offer_index
